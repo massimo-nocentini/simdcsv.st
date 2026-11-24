@@ -289,10 +289,11 @@ SimdCSVWriterTest >> testRoundTripLatin1 [
 SimdCSVWriterTest >> testRawReadsBack [
 	"What #raw does not refuse reads back"
 
-	| random written |
+	| random written rounds |
 	random := self random.
 	written := 0.
-	(self largeSize: 1500) timesRepeat: [
+	rounds := self largeSize: 1500.
+	rounds timesRepeat: [
 		| dialect rows string |
 		dialect := SimdCSVDialect new.
 		dialect
@@ -308,5 +309,5 @@ SimdCSVWriterTest >> testRawReadsBack [
 			written := written + 1.
 			self assert: (SimdCSV rowsFrom: string dialect: dialect) equals: rows.
 			self assert: (SimdCSV rowsFrom: string utf8Encoded dialect: dialect) equals: rows ] ].
-	self assert: written > 100
+	self assert: written > (rounds // 15)
 ]
