@@ -1,7 +1,7 @@
 "
 I test the memory that the reader takes with the plugin; I am skipped without it.
 
-Where the test is that old space cannot grow, the VM parameter 67 is the size of the heap meanwhile. On WebAssembly that is as it is, and the test is of lane 77.
+Where the test is that old space cannot grow, the VM parameter 67 is the size of the heap meanwhile. On WebAssembly that is as it is, and the test is of lane 79.
 "
 Class {
 	#name : 'SimdCSVMemoryTest',
