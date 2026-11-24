@@ -160,15 +160,20 @@ SimdCSVSmalltalk class >> unitsOf: anObject [
 SimdCSVSmalltalk class >> index: source base: base from: start to: stop dialect: word into: aWordArray from: destFrom [
 	"{ status. stored. records. next. lines. minFields. maxFields. code. position }: the offsets from base of the ends of the fields of the complete records of source[start..stop], stored into aWordArray from destFrom on"
 
-	| ec |
+	| ec isWords |
+	isWords := (self unitsOf: aWordArray) == #words.
 	ec := self
 		      check: source
 		      dialect: word
 		      numbers: { base. start. stop. word. destFrom }
-		      ranges: [ base >= 1 and: [ base <= start and: [ start <= (stop + 1) and: [ stop <= source basicSize ] ] ] ].
+		      ranges: [
+			      base >= 1 and: [
+				      base <= start and: [
+					      start <= (stop + 1) and: [
+						      stop <= source basicSize and: [
+							      isWords not or: [ destFrom between: 1 and: aWordArray basicSize + 1 ] ] ] ] ] ].
 	ec ifNotNil: [ ^ SimdCSVFailure on: ec ].
-	(self unitsOf: aWordArray) == #words ifFalse: [ ^ SimdCSVFailure on: #'bad argument' ].
-	(destFrom between: 1 and: aWordArray basicSize + 1) ifFalse: [ ^ SimdCSVFailure on: #'bad index' ].
+	isWords ifFalse: [ ^ SimdCSVFailure on: #'bad argument' ].
 	ec := self check: source isNot: aWordArray.
 	ec ifNotNil: [ ^ SimdCSVFailure on: ec ].
 	^ (self new source: source base: base from: start to: stop dialect: word) indexInto: aWordArray from: destFrom
@@ -221,7 +226,9 @@ SimdCSVSmalltalk class >> measure: source from: start to: stop dialect: word [
 SimdCSVSmalltalk class >> rows: source base: base to: stop dialect: word index: anIndex from: indexFrom to: indexTo types: types fieldCount: fieldCount into: anArray from: destFrom wideStringClass: wideClass empty: emptyValue budget: budget [
 	"{ status. rows. nextIndex. odd. code. position. row. field. need }: the records of the entries indexFrom to indexTo of anIndex, as Arrays stored into anArray from destFrom on.  The budget is not counted"
 
-	| ec |
+	| ec isWords isArray |
+	isWords := (self unitsOf: anIndex) == #words.
+	isArray := self isArray: anArray.
 	ec := self
 		      check: source
 		      dialect: word
@@ -229,15 +236,14 @@ SimdCSVSmalltalk class >> rows: source base: base to: stop dialect: word index: 
 		      ranges: [
 			      base >= 1 and: [
 				      base <= (stop + 1) and: [
-					      stop <= source basicSize and: [ fieldCount between: 0 and: self maxFieldCount ] ] ] ].
+					      stop <= source basicSize and: [
+						      (fieldCount between: 0 and: self maxFieldCount) and: [
+							      (isWords not or: [ indexFrom >= 1 and: [ indexTo >= (indexFrom - 1) and: [ indexTo <= anIndex basicSize ] ] ])
+								      and: [ isArray not or: [ destFrom between: 1 and: anArray size + 1 ] ] ] ] ] ] ].
 	ec ifNotNil: [ ^ SimdCSVFailure on: ec ].
-	(self unitsOf: anIndex) == #words ifFalse: [ ^ SimdCSVFailure on: #'bad argument' ].
-	(indexFrom >= 1 and: [ indexTo >= (indexFrom - 1) and: [ indexTo <= anIndex basicSize ] ]) ifFalse: [
-		^ SimdCSVFailure on: #'bad index' ].
-	(self isArray: anArray) ifFalse: [ ^ SimdCSVFailure on: #'bad argument' ].
-	(destFrom between: 1 and: anArray size + 1) ifFalse: [ ^ SimdCSVFailure on: #'bad index' ].
-	(self isWideStringClass: wideClass) ifFalse: [ ^ SimdCSVFailure on: #'bad argument' ].
-	(self areTypes: types for: fieldCount) ifFalse: [ ^ SimdCSVFailure on: #'bad argument' ].
+	(isWords and: [
+		 isArray and: [ (self isWideStringClass: wideClass) and: [ self areTypes: types for: fieldCount ] ] ]) ifFalse: [
+		^ SimdCSVFailure on: #'bad argument' ].
 	ec := self check: source isNot: anArray.
 	ec ifNotNil: [ ^ SimdCSVFailure on: ec ].
 	^ (self new source: source base: base from: base to: stop dialect: word)
@@ -272,8 +278,9 @@ SimdCSVSmalltalk >> after: p [
 SimdCSVSmalltalk >> buildRows [
 	"Make the rows of the entries slot to slotEnd, one record after the other"
 
+	self spansTooMuch ifTrue: [ ^ status := SimdCSVBackend statusTooLarge ].
 	slot > slotEnd ifTrue: [ ^ self ].
-	self openCursor ifFalse: [ ^ self failRecord: SimdCSVBackend codeBadIndex at: 0 field: 0 ].
+	self openCursor ifFalse: [ ^ self failRecord: SimdCSVBackend codeBadIndex at: base field: 0 ].
 	[ slot <= slotEnd ] whileTrue: [
 		| count row |
 		rows = capacity ifTrue: [ ^ status := SimdCSVBackend statusMore ].
@@ -533,7 +540,7 @@ SimdCSVSmalltalk >> index: anIndex from: indexFrom to: indexTo [
 
 { #category : 'backend' }
 SimdCSVSmalltalk >> indexInto: aWordArray from: anInteger [
-	to - base + 1 > self class maxSpan ifTrue: [
+	self spansTooMuch ifTrue: [
 		^ {
 			  SimdCSVBackend statusTooLarge.
 			  0.
@@ -765,6 +772,13 @@ SimdCSVSmalltalk >> source: anObject base: baseInteger from: start to: stop dial
 	isExact := (flags bitAnd: SimdCSVDialect flagExactCount) ~= 0.
 	keepsQuotedEmpty := (flags bitAnd: SimdCSVDialect flagKeepQuotedEmpty) ~= 0.
 	status := code := position := stored := records := minFields := maxFields := rows := odd := badRow := badField := 0
+]
+
+{ #category : 'private' }
+SimdCSVSmalltalk >> spansTooMuch [
+	"Whether an index cannot span the units from base to to"
+
+	^ to - base + 1 > self class maxSpan
 ]
 
 { #category : 'text' }

@@ -282,7 +282,7 @@ SimdCSVDialect >> nullTexts: aCollection [
 
 { #category : 'private' }
 SimdCSVDialect >> boolean: aBoolean [
-	aBoolean isBoolean ifFalse: [ ^ self refuse: 'a Boolean is expected, not ' , aBoolean printString ].
+	(aBoolean == true or: [ aBoolean == false ]) ifFalse: [ ^ self refuse: 'a Boolean is expected, not ' , aBoolean printString ].
 	^ aBoolean
 ]
 
