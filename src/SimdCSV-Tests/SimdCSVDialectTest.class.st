@@ -87,7 +87,10 @@ SimdCSVDialectTest >> testRefusedWords [
 		{ $,. euro. (WideString new: 1) }.
 		{ euro. $". 'a' }.
 		{ euro. $". #[ 1 ] }.
-		{ (Character value: 233). $". #[ 1 ] }.
+		{ (Character value: 128). $". #[ 1 ] }.
+		{ $,. (Character value: 128). #[ 1 ] }.
+		{ (Character value: 256). $". 'a' }.
+		{ $,. (Character value: 256). (WideString new: 1) }.
 		{ $,. (Character value: 233). #[ 1 ] }.
 		{ $,. $". nil }.
 		{ $,. $". 42 }.
@@ -101,6 +104,24 @@ SimdCSVDialectTest >> testRefusedWords [
 		[ self word: dialect for: each third ]
 			on: SimdCSVArgumentError
 			do: [ :error | self assert: (error messageText beginsWith: 'SimdCSV: ') ] ]
+]
+
+{ #category : 'tests' }
+SimdCSVDialectTest >> testSettings [
+	| dialect |
+	dialect := SimdCSVDialect new
+		           hasHeader: false;
+		           strictQuoting: true;
+		           emptyFieldValue: 0;
+		           nullTexts: (OrderedCollection with: 'NA');
+		           yourself.
+	self deny: dialect hasHeader.
+	self assert: dialect strictQuoting.
+	self deny: (dialect strictQuoting: false; strictQuoting).
+	self assert: dialect emptyFieldValue equals: 0.
+	self assert: dialect nullTexts equals: #( 'NA' ).
+	dialect := SimdCSVDialect new separator: (Character value: 127); quote: (Character value: 255); yourself.
+	self deny: (self backendObject measure: 'a' from: 1 to: 1 dialect: (self word: dialect for: (WideString with: $a))) simdCSVFailed
 ]
 
 { #category : 'tests' }

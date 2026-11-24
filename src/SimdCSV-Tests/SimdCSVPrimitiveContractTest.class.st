@@ -111,12 +111,12 @@ SimdCSVPrimitiveContractTest >> testDialect [
 	check value: (self wide: source) value: 44 value: 34 value: 16.
 	self assert: [ self backendObject measure: source from: 1 to: 3 dialect: nil ] fails: #'bad argument'.
 	self assert: [ self backendObject measure: source from: 1 to: 3 dialect: SmallInteger maxVal + 1 ] fails: #'bad argument'.
-	#( #( 44 34 0 ) #( 255 254 16 ) #( 44 44 4 ) #( 0 34 511 ) ) do: [ :each |
+	#( #( 44 34 0 ) #( 127 34 0 ) #( 44 127 0 ) #( 255 254 16 ) #( 44 44 4 ) #( 0 34 511 ) ) do: [ :each |
 		self deny: (self backendObject
 				 measure: source
 				 from: 1
 				 to: 3
-				 dialect: each first + (each second bitShift: 21) + ((each third bitOr: 16) bitShift: 29)) simdCSVFailed ].
+				 dialect: each first + (each second bitShift: 21) + (each third bitShift: 29)) simdCSVFailed ].
 	self deny: (self backendObject measure: (self wide: source) from: 1 to: 3 dialect: 16r1FFFFF + (255 bitShift: 21)) simdCSVFailed
 ]
 

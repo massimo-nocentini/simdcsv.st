@@ -269,7 +269,10 @@ SimdCSVNumbersTest >> testDigitsBeyondThePoint [
 	self assert: '1.' , (String new: 401 withAll: $0) is: 1.0.
 	self assert: '0.' , zeros , '1' is: 0.0.
 	self assert: '0.' , zeros , '1e403' is: 1.0.
-	self assert: '1' , zeros is: Float infinity
+	self assert: '1' , zeros is: Float infinity.
+	ones := String new: 900 withAll: $1.
+	self assert: ones , 'e-899' is: 1.1111111111111112.
+	self assert: ones , '.' , ones , 'e-899' is: 1.1111111111111112
 ]
 
 { #category : 'tests' }

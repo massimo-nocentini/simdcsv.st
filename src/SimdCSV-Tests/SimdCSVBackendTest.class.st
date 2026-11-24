@@ -184,6 +184,19 @@ SimdCSVBackendTest >> testGrowthThenCollection [
 ]
 
 { #category : 'tests' }
+SimdCSVBackendTest >> testNoGrowth [
+	"The memory cannot grow: collect all the garbage at once"
+
+	| backend |
+	SimdCSVBackend testHook: #grow value: [ :bytes | OutOfMemory signal ].
+	backend := SimdCSVScriptedBackend answering: {
+			           #( 4 0 1 0 0 0 0 0 5000 ).
+			           #( 4 0 1 0 0 0 0 0 5000 ) }.
+	self should: [ self rowsOf: backend ] raise: OutOfMemory.
+	self assert: backend calls equals: 2
+]
+
+{ #category : 'tests' }
 SimdCSVBackendTest >> testNoMemory [
 	"A primitive that failed for want of memory: the same with need 0"
 

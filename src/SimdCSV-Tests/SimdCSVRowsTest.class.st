@@ -298,6 +298,78 @@ SimdCSVRowsTest >> testFloats [
 ]
 
 { #category : 'tests' }
+SimdCSVRowsTest >> testFloatLimits [
+	"What is converted and what is left: an exact mantissa, an exact power of ten, an exponent below 99999"
+
+	#( '9007199254740992e22' 9.007199254740992e37 '900719925474099e23' 9.00719925474099e37 '0e37' 0.0 '0e-22' 0.0 '1e0022' 1.0e22 '0000000000000000000000001' 1.0 ) pairsDo: [ :text :value |
+		self assert: (self cells: text type: 3) equals: { { value }. 0 } ].
+	#( '9007199254740993' '9007199254740992e23' '900719925474100e23' '0e38' '0e-23' '1e-23' '0e99999' '0.1e+' '1.00000000000000000000' ) do: [ :text |
+		self assert: (self cells: text type: 3) equals: { { text }. 1 } ].
+	#( 9999 99997 ) do: [ :zeros |
+		self
+			assert: (self cells: '0.' , (String new: zeros withAll: $0) , '1e' , (zeros + 1) printString type: 3)
+			equals: #( #( 1.0 ) 0 ) ].
+	#( 99998 99999 ) do: [ :zeros |
+		self assert: (self cells: '0.' , (String new: zeros withAll: $0) , '1e' , (zeros + 1) printString type: 3) second equals: 1 ]
+]
+
+{ #category : 'tests' }
+SimdCSVRowsTest >> testBadStart [
+	"The entry before the first one must be a line end of the source"
+
+	| source |
+	source := 'ab' , String lf , 'cd,e' , String lf , 'f'.
+	{
+		{ #( 2 5 7 9 ). #( 0 2 5 0 0 0 0 0 0 ) }.
+		{ #( 1 5 7 9 ). #( 2 0 2 0 6 1 1 0 0 ) }.
+		{ #( 9 5 7 9 ). #( 2 0 2 0 6 1 1 0 0 ) }.
+		{ #( 10 5 7 9 ). #( 2 0 2 0 6 1 1 0 0 ) }.
+		{ #( 8 5 7 9 ). #( 2 0 2 0 6 1 1 0 0 ) }.
+		{ #( 5 5 7 9 ). #( 2 0 2 0 6 1 1 0 0 ) }.
+		{ #( 4294967295 5 7 9 ). #( 2 0 2 0 6 1 1 0 0 ) } } do: [ :each |
+		self
+			assert: (self backendObject
+					 rows: source
+					 base: 1
+					 to: source size
+					 dialect: (self wordFlags: SimdCSVDialect flagLatin1)
+					 index: (WordArray withAll: each first)
+					 from: 2
+					 to: 4
+					 types: nil
+					 fieldCount: 0
+					 into: (Array new: 10)
+					 from: 1
+					 wideStringClass: WideString
+					 empty: nil
+					 budget: -1)
+			equals: each second ]
+]
+
+{ #category : 'tests' }
+SimdCSVRowsTest >> testBlankLinesToTheEnd [
+	"A record cannot begin after the last blank line"
+
+	self
+		assert: (self backendObject
+				 rows: 'a' , String lf , String lf
+				 base: 1
+				 to: 3
+				 dialect: (self wordFlags: (self flags: #( latin1 skipBlank )))
+				 index: (WordArray withAll: #( 1 3 ))
+				 from: 1
+				 to: 2
+				 types: nil
+				 fieldCount: 0
+				 into: (Array new: 10)
+				 from: 1
+				 wideStringClass: WideString
+				 empty: nil
+				 budget: -1)
+		equals: #( 2 1 2 0 6 4 2 0 0 )
+]
+
+{ #category : 'tests' }
 SimdCSVRowsTest >> testFloatsWithComma [
 	| result |
 	result := self

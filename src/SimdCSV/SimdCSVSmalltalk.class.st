@@ -510,7 +510,7 @@ SimdCSVSmalltalk >> floatWithPoint: point [
 
 { #category : 'numbers' }
 SimdCSVSmalltalk >> exponentFrom: start to: stop [
-	"The exponent of the units start to stop, 0 when there are none, or nil when they are no exponent; it saturates at 99999"
+	"The exponent of the units start to stop, 0 when there are none, or nil when they are no exponent, or one of 99999 and more, which is not converted whatever the mantissa"
 
 	| p unit isNegative value |
 	start > stop ifTrue: [ ^ 0 ].
@@ -525,7 +525,8 @@ SimdCSVSmalltalk >> exponentFrom: start to: stop [
 	p to: stop do: [ :k |
 		unit := (source basicAt: k) - 48.
 		(unit between: 0 and: 9) ifFalse: [ ^ nil ].
-		value := value * 10 + unit min: 99999 ].
+		value := value * 10 + unit.
+		value >= 99999 ifTrue: [ ^ nil ] ].
 	^ isNegative
 		  ifTrue: [ value negated ]
 		  ifFalse: [ value ]

@@ -21,7 +21,7 @@ BaselineOfSimdCSV >> baseline: spec [
 	spec for: #common do: [
 		spec
 			baseline: 'NeoCSV'
-			with: [ spec repository: 'github://svenvc/NeoCSV:01948fc/repository' ].
+			with: [ spec repository: 'github://svenvc/NeoCSV:01948fcd7c1775f2254847a65410c49b2e7ad59b/repository' ].
 		spec
 			package: 'SimdCSV';
 			package: 'SimdCSV-Tests' with: [ spec requires: #( 'SimdCSV' ) ];

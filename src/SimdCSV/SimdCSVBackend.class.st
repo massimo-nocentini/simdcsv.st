@@ -71,16 +71,15 @@ SimdCSVBackend class >> current [
 
 { #category : 'private' }
 SimdCSVBackend class >> grow: byteCount [
-	"Whether the object memory grew by at least byteCount bytes: growMemoryByAtLeast: signals OutOfMemory when it cannot (old space may have a maximum, as in WebAssembly), which is no error here: all the garbage is collected instead.  The test hook #grow, a block, is evaluated instead, and its answer is not used"
+	"Whether the object memory grew by at least byteCount bytes: growMemoryByAtLeast: signals OutOfMemory when it cannot (old space may have a maximum, as in WebAssembly), which is no error here: all the garbage is collected instead.  The test hook #grow, a block, is evaluated instead"
 
-	(self testHook: #grow) ifNotNil: [ :hook |
-		hook value: byteCount.
-		^ true ].
 	^ [
-	  Smalltalk growMemoryByAtLeast: byteCount.
+	  (self testHook: #grow)
+		  ifNil: [ Smalltalk growMemoryByAtLeast: byteCount ]
+		  ifNotNil: [ :hook | hook value: byteCount ].
 	  true ]
-		on: OutOfMemory
-		do: [ :error | error return: false ]
+		  on: OutOfMemory
+		  do: [ :error | error return: false ]
 ]
 
 { #category : 'accessing' }
