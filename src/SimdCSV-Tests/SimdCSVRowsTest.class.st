@@ -343,7 +343,25 @@ SimdCSVRowsTest >> testBadStart [
 					 wideStringClass: WideString
 					 empty: nil
 					 budget: -1)
-			equals: each second ]
+			equals: each second ].
+	"after the last line end there is no record"
+	self
+		assert: (self backendObject
+				 rows: 'ab' , String lf
+				 base: 1
+				 to: 3
+				 dialect: (self wordFlags: SimdCSVDialect flagLatin1)
+				 index: (WordArray withAll: #( 2 3 ))
+				 from: 2
+				 to: 2
+				 types: nil
+				 fieldCount: 0
+				 into: (Array new: 10)
+				 from: 1
+				 wideStringClass: WideString
+				 empty: nil
+				 budget: -1)
+		equals: #( 2 0 2 0 6 4 1 0 0 )
 ]
 
 { #category : 'tests' }

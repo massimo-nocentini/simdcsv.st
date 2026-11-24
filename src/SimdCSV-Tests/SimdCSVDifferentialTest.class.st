@@ -181,6 +181,39 @@ SimdCSVDifferentialTest >> testRows [
 ]
 
 { #category : 'tests' }
+SimdCSVDifferentialTest >> testBudget [
+	"The plugin stops at the first record after the budget is used, one record being always tried; the calls together make the rows of one call"
+
+	| source index count all |
+	source := (String streamContents: [ :stream |
+		           1 to: 300 do: [ :i | stream print: i; nextPutAll: ',abcdefghijklmnop,"x""y",1.5e30'; lf ] ]) asByteArray.
+	index := WordArray new: 2000.
+	count := (SimdCSVPrimitives index: source base: 1 from: 1 to: source size dialect: (self wordFlags: 32) into: index from: 1) second.
+	all := Array new: 300.
+	SimdCSVSmalltalk
+		rows: source base: 1 to: source size dialect: (self wordFlags: 0) index: index from: 1 to: count
+		types: #[ 2 1 1 3 ] fieldCount: 4 into: all from: 1 wideStringClass: WideString empty: nil budget: -1.
+	#( 0 1 100 1000 100000 ) do: [ :budget |
+		| rows next answer calls |
+		rows := Array new: 300.
+		next := 1.
+		calls := 0.
+		[
+		answer := SimdCSVPrimitives
+			          rows: source base: 1 to: source size dialect: (self wordFlags: 0) index: index from: next to: count
+			          types: #[ 2 1 1 3 ] fieldCount: 4 into: rows from: next // 4 + 1 wideStringClass: WideString empty: nil budget: budget.
+		calls := calls + 1.
+		answer first = 1 ] whileTrue: [
+			self assert: answer second > 0.
+			self assert: (answer third - 1) \\ 4 equals: 0.
+			next := answer third ].
+		self assert: answer first equals: 0.
+		self assert: rows equals: all.
+		budget < 100 ifTrue: [ self assert: calls equals: 300 ].
+		budget = 100000 ifTrue: [ self assert: calls < 10 ] ]
+]
+
+{ #category : 'tests' }
 SimdCSVDifferentialTest >> testRowsOfRandomIndexes [
 	(self largeSize: 5000) timesRepeat: [
 		| source index |
