@@ -151,7 +151,7 @@ reader next
 ```
 
 - Types: `#string`, `#integer`, `#float`, `#floatComma`, `#symbol` and `#boolean`. Numbers are exact: an integer has up to 4,300 digits, a Float is the nearest one; `nan` and `inf` are Floats.
-- `converter: aBlock cached: true` evaluates the block once for each text (10,000 texts at most): for dates, times and codes, of which a file has few different ones. (10 MB of a GTFS `stop_times.txt` as objects, two times a record: 1.08 s without, 0.26 s with; NeoCSV 2.3 s.)
+- `converter: aBlock cached: true` evaluates the block once for each text (10,000 texts at most): for dates, times and codes, of which a file has few different ones. (10 MB of a GTFS `stop_times.txt` as objects, two times a record: 1.1 s without, 0.26 s with; NeoCSV 2.3 s, and 1.4 s with converters that keep their own Dictionary.)
 - A text that is not of its type signals `SimdCSVConversionError`, which can be resumed with the value of the cell, or is given to the block of `ifInvalid:`; `nullTexts:` are texts, such as NA, that mean an empty field.
 
 ```smalltalk
@@ -271,8 +271,8 @@ Records of at least one field, each nil or a String that is not empty, read back
 
 ## Speed
 
-On the JIT (Xeon 6238R, Pharo 15; `docs/SimdCSV.md` of the VM has the benchmark, its gates and the other VMs), 10 MB of 10 mixed columns: `rowsFrom:` 95 MB/s (NeoCSV 11), `rowsFrom:do:` on a file 128 (9), typed rows 127 (6.5), 3 columns of the 10 by name 263 (11), `count:` 3.1 GB/s. Without the plugin 16 MB/s for `rowsFrom:` of 1 MB.
-Short fields that are all kept make a full garbage collection (8 columns of integers: 44 MB/s, NeoCSV 9); `do:` makes none, whatever the size of the file. Converters without `cached:` and Floats of 17 digits are the work of the image. The writer is in Smalltalk: at 1 MB as fast as NeoCSV's when every field is quoted and 1.8 times as fast with `#optionalQuoted`, at 10 MB 0.56 and 1.6 times.
+On the JIT (Xeon 6238R, Pharo 15; `docs/SimdCSV.md` of the VM has the benchmark, its gates and the other VMs), 10 MB of 10 mixed columns: `rowsFrom:` 96 MB/s (NeoCSV 11), `rowsFrom:do:` on a file 131 (10), typed rows 130 (6), 3 columns of the 10 by name 269 (11), `count:` 3.1 GB/s. Without the plugin 16 MB/s for `rowsFrom:` of 1 MB.
+Rows that are all kept make old space grow, and a full garbage collection comes every one or two calls of 10 MB: called again and again `rowsFrom:` is at 44 MB/s (NeoCSV 10). `do:` makes none, whatever the size of the file (2 GB: 15 s, nothing retained). Sources of one or two short lines are read 1.4 to 2 times as slowly as by NeoCSV, from three lines on faster. Converters without `cached:` and Floats of 17 digits are the work of the image. The writer is in Smalltalk: at 1 MB 0.9 times as fast as NeoCSV's when every field is quoted and 1.7 times with `#optionalQuoted`, at 10 MB 0.5 and 1.5 times; with characters beyond U+00FF in every record 0.5 and 1.3 times at 1 MB.
 
 ## Limits
 

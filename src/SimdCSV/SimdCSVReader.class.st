@@ -966,13 +966,6 @@ SimdCSVReader >> positionOfColumn: aName [
 ]
 
 { #category : 'private - header' }
-SimdCSVReader class >> positionOf: aName in: names [
-	"The position of aName in names, which must have it once"
-
-	^ self positionOf: aName in: names positions: (self positionsIn: names)
-]
-
-{ #category : 'private - header' }
 SimdCSVReader class >> positionOf: aName in: names positions: aDictionary [
 	"The position of aName in names, which must have it once; aDictionary is their positionsIn:"
 
