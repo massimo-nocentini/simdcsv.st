@@ -28,7 +28,7 @@ A row is a new Array of `columnCount` Strings, `emptyFieldValue` for the empty o
 
 ## Limits
 
-The text has at most 4,294,967,294 units, and the index at most `maxIndexBytes` (1 GiB, 256 MiB in WebAssembly; `maxIndexBytes:` on my class side). Beyond, I am not made: `SimdCSVResourceError`. A `SimdCSVReader` has no such limits.
+The text has at most 4,294,967,294 units, and the index at most `maxIndexBytes` (1 GiB; 256 MiB in WebAssembly and in a VM whose old space is bounded; `maxIndexBytes:` on my class side). Beyond, I am not made: `SimdCSVResourceError`. A `SimdCSVReader` has no such limits.
 "
 Class {
 	#name : 'SimdCSVTable',

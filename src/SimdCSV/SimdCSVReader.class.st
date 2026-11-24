@@ -17,7 +17,7 @@ I have the protocol of `NeoCSVReader`, so that its users need only change the na
 
 ## Sources
 
-`on:` takes a String, a ByteArray, a FileReference or a stream; `on:do:` also closes it. Bytes are UTF-8 (or `encoding: #latin1`). A collection, and a `ReadStream` on one, is read in place; a file (a FileReference, or the stream of its `readStream`) is read as bytes, which is the fast way. I read ahead by a batch (`batchBytes:`), so that the position of a stream is unspecified once I have begun.
+`on:` takes a String, a ByteArray, a FileReference or a stream; `on:do:` also closes it. Bytes are UTF-8 (or `encoding: #latin1`). A collection, and a `ReadStream` on one, is read in place; a file (a FileReference, or the stream of its `readStream`) is read as bytes, which is the fast way. I read ahead by a batch (`batchBytes:`), so that the position of a stream is unspecified once I have begun. A socket is read as it comes; another stream that waits until it has what it is asked for, such as a pipe or the body of an HTTP answer, gives 4 KiB, or its end, before the first record.
 
 ## Fields
 
@@ -31,13 +31,23 @@ An empty field is never given to an accessor or a converter; `emptyFieldValue:` 
 
 ## Records and errors
 
-Accessors, converters and conversions run when a record is reached by `next` or `do:`, never ahead; I have passed a record when the block of `do:` is called. An error of the text is signalled when its record is reached, after all those before it. I then stand on that record: `next` signals again, `skipFailedRecord` passes it (the whole input after a `SimdCSVResourceError`). At the end, `next` answers nil.
+Accessors, converters and conversions run when a record is reached by `next` or `do:`, never ahead; I have passed a record when the block of `do:` is called. An error of the text is signalled when its record is reached, after all those before it. I then stand on that record: `next` signals again, `skipFailedRecord` passes it (the whole input after a `SimdCSVResourceError`), and does nothing when no error was signalled for the next record. At the end, `next` answers nil.
+
+```smalltalk
+[ reader do: [ :record | self handle: record ] ]
+	on: SimdCSVParseError
+	do: [ :error |
+		reader skipFailedRecord.
+		error retry ]
+```
+
+(`upToEnd` would lose the records before the error.)
 
 `recordNumber` is the number of the record read last, the header included. Configuration messages may come at any time, also after a first `next`; they act from the next record on, but for `encoding:`. One process may use me at a time.
 
 ## Limits
 
-A record has at most `maxRecordBytes:` units (64 MiB, 16 MiB in WebAssembly; up to two more, the size of a line end, pass) and `maxFields:` fields (65,536).
+A record has at most `maxRecordBytes:` units (64 MiB; 16 MiB in WebAssembly and in a VM whose old space is bounded, that is with its parameter 67; up to two more, the size of a line end, pass) and `maxFields:` fields (65,536). A limit that was passed may be raised: the record is then read.
 
 ## Semantics
 
@@ -66,7 +76,7 @@ Compared with NeoCSV, where strict means `beStrict` (field counts) or `beStrictQ
 | duplicate names, Dictionary | the last wins | SimdCSVHeaderError, or renameDuplicates | same |
 | empty name in the header | does not understand asSymbol | column and its number | same |
 | addField and the like after a first next | works | works | works |
-| stream position while reading | exact | read ahead | same |
+| stream position while reading | exact | read ahead; a socket as it comes | same |
 
 Strings are never shared between cells (`emptyFieldValue` is), and each has the narrowest class.
 

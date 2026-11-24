@@ -7,7 +7,7 @@ The work is done by the SimdCSVPlugin of the VM of [massimo-nocentini/pharo-vm](
 - `SimdCSV` is the facade: rows, Dictionaries, tables, counts, and back.
 - `SimdCSVReader` has the protocol of `NeoCSVReader`: typed fields, converters, record classes, headers; files and streams of any size in constant memory.
 - `SimdCSVTable` is a text with its index: rows and columns are made when they are asked for.
-- `SimdCSVWriter` has the protocol of `NeoCSVWriter`.
+- `SimdCSVWriter` has the protocol of `NeoCSVWriter`, but for its private messages.
 - `SimdCSVDialect` says how the text is written.
 
 Nothing of Pharo is replaced, nothing of NeoCSV is needed or shadowed, and the one extension method is `simdCSVFailed`.
@@ -59,6 +59,17 @@ SimdCSV count: 'a,b' , String lf , '1,2' , String lf
 
 A row has as many fields as its record; an empty field is nil, quoted or not (see the dialect). `rowsFrom:do:` takes memory that does not grow with the source; `count:` makes no row.
 
+Bytes of another encoding than UTF-8: Latin-1 is read as it is, the others are decoded first.
+
+```smalltalk
+| latin1 |
+latin1 := SimdCSVDialect new
+	encoding: #latin1;
+	yourself.
+SimdCSV rowsFrom: #[233 44 98] dialect: latin1
+"=> #(#('é' 'b'))"
+```
+
 ## Dialects
 
 ```smalltalk
@@ -109,6 +120,23 @@ SimdCSV rowsFrom: '"a"b,c"d'
 "=> #(10 30)"
 ```
 
+A file is read in batches, whatever its size, and `on:do:` closes it:
+
+```smalltalk
+| file sum |
+file := FileSystem memory / 'readings.csv'.
+file writeStreamDo: [ :stream | stream nextPutAll: 'station,value' , String lf , 'a,1.5' , String lf , 'b,2' , String lf ].
+sum := 0.
+SimdCSVReader on: file do: [ :reader |
+	reader
+		skipHeader;
+		addField;
+		addFloatField;
+		do: [ :row | sum := sum + row second ] ].
+sum
+"=> 3.5"
+```
+
 Or they are taken by the names of a header:
 
 ```smalltalk
@@ -140,7 +168,23 @@ reader next
 "=> 'Not an integer: ''12abc'' in column sequence (field 2), record 2, line 2, character 17'"
 ```
 
-Conversions, accessors and errors come when their record is reached by `next` or `do:`, never ahead. After an error the reader stands on that record: `next` signals again, `skipFailedRecord` passes it.
+Conversions, accessors and errors come when their record is reached by `next` or `do:`, never ahead. After an error the reader stands on that record: `next` signals again, `skipFailedRecord` passes it (and does nothing when no error was signalled). So this reads all the records that can be read, and the bad ones are counted; `upToEnd` instead of `do:` would lose the records before each bad one.
+
+```smalltalk
+| reader good bad |
+reader := SimdCSVReader on: '1' , String lf , 'x' , String lf , '3' , String lf , 'y'.
+reader addIntegerField.
+good := OrderedCollection new.
+bad := OrderedCollection new.
+[ reader do: [ :row | good add: row first ] ]
+	on: SimdCSVParseError
+	do: [ :error |
+		bad add: error record.
+		reader skipFailedRecord.
+		error retry ].
+{ good asArray. bad asArray }
+"=> #(#(1 3) #(2 4))"
+```
 
 ```smalltalk
 | reader |
@@ -205,7 +249,25 @@ AB;2
 '"
 ```
 
-`SimdCSV bytesFrom:` answers UTF-8, and a binary stream gets it. Records of at least one field, each nil or a String that is not empty, read back equal with the same dialect from `#quoted` (the default) and `#optionalQuoted`; `#raw` refuses a text that would not.
+`SimdCSV bytesFrom:` answers UTF-8, and a binary stream gets it. `SimdCSV write:to:` takes a stream, or a FileReference whose file is replaced; a `SimdCSVWriter` takes a stream:
+
+```smalltalk
+| file |
+file := FileSystem memory / 'out.csv'.
+file binaryWriteStreamDo: [ :stream |
+	(SimdCSVWriter on: stream)
+		addRawField: #size;
+		addQuotedField: #asUppercase;
+		nextPutAll: #( 'ab' 'c' ) ].
+file contents
+"=> '2,""AB""
+1,""C""
+'"
+```
+
+A field has the writer of `fieldWriter:` (`#quoted`, `#optionalQuoted`, `#raw`, `#object`) or one of its own, as with `NeoCSVWriter`. An empty field (nil) is not quoted, unlike there.
+
+Records of at least one field, each nil or a String that is not empty, read back equal with the same dialect from `#quoted` (the default) and `#optionalQuoted`; `#raw` refuses a text that would not.
 
 ## Speed
 
@@ -214,7 +276,7 @@ Short fields that are all kept make a full garbage collection (8 columns of inte
 
 ## Limits
 
-A record has at most 64 MiB (`maxRecordBytes:`; 16 MiB in WebAssembly) and 65,536 fields (`maxFields:`), a table at most 4,294,967,294 units and an index of 1 GiB (`SimdCSVTable maxIndexBytes:`; 256 MiB in WebAssembly): `SimdCSVResourceError` says which was passed, and where a quote was left open. A reader reads sources of any size.
+A record has at most 64 MiB (`maxRecordBytes:`) and 65,536 fields (`maxFields:`), a table at most 4,294,967,294 units and an index of 1 GiB (`SimdCSVTable maxIndexBytes:`); 16 MiB and 256 MiB in WebAssembly and in a VM whose old space is bounded (its parameter 67): `SimdCSVResourceError` says which was passed, and where a quote was left open. A reader reads sources of any size.
 
 There are no comments, escape characters, trimmed spaces, separators of several characters or encodings other than UTF-8 and Latin-1 (decode the text first).
 

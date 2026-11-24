@@ -11,6 +11,7 @@ SimdCSV tableFrom: 'data.csv' asFileReference.
 SimdCSV count: 'data.csv' asFileReference.
 SimdCSV stringFrom: #( #( 'a' 'b' ) #( 1 2.5 ) ).
 SimdCSV write: rows to: aStream.
+SimdCSV write: rows to: 'new.csv' asFileReference.
 ```
 
 A source is a String, a Symbol, a ByteArray, a FileReference or a stream. Each message has a form with `dialect:`, and one `SimdCSVDialect` governs all of them: a blank line is a record unless the dialect says `skipEmptyLines: true`, so that the size of `rowsFrom:`, `count:`, and the `rowCount` of `tableFrom:` and its header agree. A row is an Array of the Strings of its record, as many as it has, nil for an empty one.

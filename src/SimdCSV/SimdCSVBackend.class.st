@@ -11,7 +11,7 @@ The choice is made once a session (`current`, `backend`, `pluginInfo`); `resetBa
 - NO_ROOM, or a primitive that failed because no object could be allocated: the object memory grows by the need and 1 MiB and the call is made again; then all the garbage is collected and the call is made a last time; then `OutOfMemory`;
 - any other failure signals `SimdCSVArgumentError` with the error code of the primitive.
 
-Where old space cannot grow at will (`isBounded`), a call for rows that fills it ends in OutOfMemory, or in the end of the VM, although a collection would have made room: the VM does not collect before. So I look at the free old space before such a call. When it may be too little, the object memory grows, or else all the garbage is collected; when it is still little the budget of the call is reduced, and when not even the first record fits, of which the plugin tells the size, I signal `OutOfMemory` and nothing is built.
+Where old space cannot grow at will (`isBounded`), a call for rows that fills it ends in OutOfMemory, or in the end of the VM, although a collection would have made room: the VM does not collect before. So I look at the free old space before such a call. When it may be too little, the object memory grows, or else all the garbage is collected; when it is still little the budget of the call is reduced, and when not even the first record fits, of which the plugin tells the size (the budget -2), I signal `OutOfMemory` and nothing is built.
 
 ## Test hooks
 
