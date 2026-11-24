@@ -105,6 +105,7 @@ SimdCSVReaderTest >> testClose [
 	reader close.
 	self assert: stream isClosed.
 	self assert: reader atEnd.
+	self assert: reader recordNumber equals: 1.
 	self assert: reader next isNil.
 	self assert: reader upToEnd equals: #(  ).
 	reader := self reader: (stream := SimdCSVTestStream on: 'a').

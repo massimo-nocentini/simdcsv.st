@@ -231,6 +231,26 @@ SimdCSVTableTest >> testFileIsNotModified [
 ]
 
 { #category : 'tests' }
+SimdCSVTableTest >> testStreamOfTheCaller [
+	"A stream is read from where it stands, and not closed"
+
+	| stream table |
+	stream := SimdCSVTestStream on: self sample.
+	self assert: (SimdCSV tableFrom: stream) rowCount equals: 3.
+	self deny: stream isClosed.
+	stream := ('###' , (self lines: #( 'a,b' '1,x"' '2,3' ))) readStream.
+	stream skip: 3.
+	table := SimdCSV tableFrom: stream.
+	self assert: [ table column: #b as: #integer ] signals: SimdCSVConversionError text: 'Not an integer: ''x"'' in column b (field 2), record 2, line 2, character 7'.
+	stream := ('###' , (self lines: #( 'a,b' '1,x"' '2,3' ))) asByteArray readStream.
+	stream skip: 3.
+	self assert: [ SimdCSV tableFrom: stream dialect: (self dialect: [ :dialect | dialect strictQuoting: true ]) ] signals: SimdCSVQuoteError text: 'Unexpected quote at byte 8 (record 2, line 2)'.
+	stream := #[ 35 97 10 49 10 50 10 255 ] readStream.
+	stream skip: 1.
+	self assert: [ (SimdCSV tableFrom: stream) column: 1 ] signals: SimdCSVInvalidEncoding text: 'Invalid UTF-8 at byte 7 (record 4, line 4, field 1): try encoding: #latin1, or decode the file first'
+]
+
+{ #category : 'tests' }
 SimdCSVTableTest >> testMoreRowsThanABatch [
 	| table count |
 	count := 9001.

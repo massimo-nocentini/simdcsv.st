@@ -37,7 +37,7 @@ Accessors, converters and conversions run when a record is reached by `next` or 
 
 ## Limits
 
-A record has at most `maxRecordBytes:` units (64 MiB, 16 MiB in WebAssembly) and `maxFields:` fields (65,536).
+A record has at most `maxRecordBytes:` units (64 MiB, 16 MiB in WebAssembly; up to two more, the size of a line end, pass) and `maxFields:` fields (65,536).
 
 ## Semantics
 
@@ -1313,10 +1313,10 @@ SimdCSVReader >> buildRows [
 	"Build the next batch of rows from the index"
 
 	| answer |
-	self plan.
 	recordsDone := recordsDone + rowCount.
 	rowCount := 0.
 	rowNext := 1.
+	self plan.
 	(rows isNil or: [ rows size < (indexRecords min: self maxRows) ]) ifTrue: [ rows := Array new: (indexRecords min: self maxRows) ].
 	answer := SimdCSVBackend
 		          rows: input source
@@ -1454,7 +1454,7 @@ SimdCSVReader >> planWidth [
 	(width = 0 and: [ dialect strictFieldCount ]) ifFalse: [ ^ self ].
 	firstWidth ifNil: [
 		firstWidth := (self lastSlotFrom: slot) - slot + 1.
-		firstWidthRecord := recordsDone + rowCount + 1 ].
+		firstWidthRecord := recordsDone + 1 ].
 	width := firstWidth
 ]
 

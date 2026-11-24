@@ -170,7 +170,8 @@ SimdCSVWriterTest >> testBinaryStream [
 	self assert: (self read: (SimdCSV bytesFrom: wide)) equals: wide.
 	self assert: (self read: (SimdCSV stringFrom: wide)) equals: wide.
 	self assert: (SimdCSV bytesFrom: #( #( 'é' ) ) dialect: (SimdCSVDialect comma encoding: #latin1; yourself)) equals: #[ 34 233 34 10 ].
-	self assert: [ SimdCSV bytesFrom: wide dialect: (SimdCSVDialect comma encoding: #latin1; yourself) ] signals: SimdCSVArgumentError
+	self assert: [ SimdCSV bytesFrom: wide dialect: (SimdCSVDialect comma encoding: #latin1; yourself) ] signals: SimdCSVArgumentError.
+	self assert: [ SimdCSV bytesFrom: { { (String with: (Character codePoint: 256)) } } dialect: (SimdCSVDialect comma encoding: #latin1; yourself) ] signals: SimdCSVArgumentError
 ]
 
 { #category : 'tests' }

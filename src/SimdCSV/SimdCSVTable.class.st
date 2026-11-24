@@ -474,7 +474,7 @@ SimdCSVTable >> valueOfInvalid: text in: aColumn record: record [
 		columnName: aColumn name;
 		field: aColumn position.
 	self place: error record: record.
-	error position: (self startOfSlot: (self firstSlotOf: record) + aColumn position - 1) + origin.
+	aColumn position > 1 ifTrue: [ error position: (self startOfSlot: (self firstSlotOf: record) + aColumn position - 1) + origin ].
 	^ error signal
 ]
 

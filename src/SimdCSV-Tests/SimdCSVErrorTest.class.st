@@ -47,6 +47,7 @@ SimdCSVErrorTest >> testQuoteErrors [
 	self assert: [ (self reader: text) beStrictQuoting; upToEnd ] signals: SimdCSVQuoteError text: 'Unexpected quote at character 12 (record 2, line 2)'.
 	self assert: [ (self reader: (self lines: #( '"a"' '"a" ,b' )) asByteArray) beStrictQuoting; upToEnd ] signals: SimdCSVQuoteError text: 'Text after a closing quote at byte 8 (record 2, line 2)'.
 	self assert: [ (self reader: (self lines: #( 'a' 'b,"c' 'd' )) asByteArray) beStrictQuoting; upToEnd ] signals: SimdCSVQuoteError text: 'Unterminated quote opened at byte 5 (record 2, line 2)'.
+	self assert: [ (self reader: String lf , String crlf , String lf , 'a' , String lf , String lf , 'b"') skipEmptyLines; beStrictQuoting; upToEnd ] signals: SimdCSVQuoteError text: 'Unexpected quote at character 9 (record 2, line 6)'.
 	self assert: [ SimdCSV count: text asByteArray dialect: (SimdCSVDialect comma strictQuoting: true; yourself) ] signals: SimdCSVQuoteError text: 'Unexpected quote at byte 12 (record 2, line 2)'.
 	self assert: [ SimdCSV tableFrom: text asByteArray dialect: (SimdCSVDialect comma strictQuoting: true; yourself) ] signals: SimdCSVQuoteError text: 'Unexpected quote at byte 12 (record 2, line 2)'
 ]
@@ -71,6 +72,8 @@ SimdCSVErrorTest >> testRecordTooLong [
 		self assert: error quotePosition equals: 13.
 		self assert: error limit equals: 14.
 		self assert: [ (self reader: (SimdCSVTestStream on: text sizes: #( 3 ))) batchBytes: batch; maxRecordBytes: 14; upToEnd ] signals: SimdCSVResourceError text: 'Record 2 starting at line 2 (character 5) exceeds maxRecordBytes (14): possible unclosed quote opened at character 13'.
+		self assert: [ (self reader: ('x' , String cr , '"yyyyyyyy') asByteArray) batchBytes: batch; maxRecordBytes: 5; dialect: (SimdCSVDialect comma lineEnd: #lf; yourself); upToEnd ] signals: SimdCSVResourceError text: 'Record 1 starting at line 1 (byte 1) exceeds maxRecordBytes (5)'.
+		self assert: [ (self reader: (String cr , '"yyyyyyyy') asByteArray) batchBytes: batch; maxRecordBytes: 5; upToEnd ] signals: SimdCSVResourceError text: 'Record 2 starting at line 2 (byte 2) exceeds maxRecordBytes (5): possible unclosed quote opened at byte 2'.
 		self assert: [ (self reader: 'abcdefghij' asByteArray) batchBytes: batch; maxRecordBytes: 5; upToEnd ] signals: SimdCSVResourceError text: 'Record 1 starting at line 1 (byte 1) exceeds maxRecordBytes (5)'.
 		self assert: [ (self reader: 'abcdefghij"k' asByteArray) batchBytes: batch; maxRecordBytes: 5; quote: nil; upToEnd ] signals: SimdCSVResourceError text: 'Record 1 starting at line 1 (byte 1) exceeds maxRecordBytes (5)' ]
 ]
@@ -98,7 +101,7 @@ SimdCSVErrorTest >> testTableLimits [
 	self assert: (SimdCSV tableFrom: 'a,b,c') columnCount equals: 3.
 	self assert: [ SimdCSV tableFrom: 'a,b,c,d' ] signals: SimdCSVResourceError text: 'The index takes 16 bytes, more than maxIndexBytes (12)' ] ensure: [ SimdCSVTable maxIndexBytes: nil ].
 	self assert: [ SimdCSVSmallTestTable on: 'a,b,c,d,e' ] signals: SimdCSVResourceError text: 'The input has 9 characters, more than 8'.
-	self assert: (SimdCSVSmallTestTable on: 'a,b,c,d') columnCount equals: 4.
+	self assert: (SimdCSVSmallTestTable on: 'a,b,c,dd') columnCount equals: 4.
 	self assert: (self assert: [ SimdCSVSmallTestTable on: (SimdCSVTestStream on: (ByteArray new: 100)) ] signals: SimdCSVResourceError) kind equals: #inputUnits.
 	self assert: [
 		SimdCSVSmallTestTable on: (FileSystem memory / 'a.csv' in: [ :file |
@@ -137,7 +140,14 @@ SimdCSVErrorTest >> testPlacesInRandomTexts [
 	| random |
 	random := self random.
 	(self largeSize: 400) timesRepeat: [
-		| text bad start record records error skip source reader mark table |
+		| text bad start record records error skip source reader mark table field ends blank end |
+		field := random nextInteger: 2.
+		ends := {
+			        String lf.
+			        String cr.
+			        String crlf }.
+		blank := (random nextInteger: 2) = 1.
+		blank ifTrue: [ ends := Array new: 3 withAll: (ends at: (random nextInteger: 3)) ].
 		skip := (random nextInteger: 2) = 1.
 		records := random nextInteger: 12.
 		bad := random nextInteger: records.
@@ -146,26 +156,28 @@ SimdCSVErrorTest >> testPlacesInRandomTexts [
 		text := String streamContents: [ :out |
 			        mark ifTrue: [ out nextPut: (Character codePoint: 16rFEFF) ].
 			        1 to: records do: [ :i |
-				        [ (random nextInteger: 3) = 1 ] whileTrue: [
-					        out nextPutAll: String crlf.
+				        [ blank and: [ (random nextInteger: 3) = 1 ] ] whileTrue: [
+					        out nextPutAll: ends first.
 					        skip ifFalse: [ record := record + 1 ] ].
 				        record := record + 1.
 				        i = bad ifTrue: [ start := { (out position + 1). record } ].
 				        out nextPutAll: (i = bad
-						         ifTrue: [ '1,x' ]
+						         ifTrue: [ #( 'x,1' '1,x' ) at: field ]
 						         ifFalse: [
 							         #( '1,2' '3,"' ) at: (random nextInteger: 2) ]).
 				        (out contents last = $") ifTrue: [
 					        (random nextInteger: 4) timesRepeat: [ out nextPutAll: ({ String lf. String cr. String crlf. 'a' } at: (random nextInteger: 4)) ].
 					        out nextPut: $" ].
-				        i = records ifFalse: [ out nextPutAll: ({ String lf. String cr. String crlf } at: (random nextInteger: 3)) ] ] ].
+				        i = records ifFalse: [
+					        end := ends at: (random nextInteger: 3).
+					        out nextPutAll: end ] ] ].
 		source := (random nextInteger: 2) = 1
 			          ifTrue: [ text ]
 			          ifFalse: [ SimdCSVTestStream on: text sizes: { (random nextInteger: 5). (random nextInteger: 30) } ].
 		reader := self reader: source.
 		reader
 			batchBytes: (random nextInteger: 40);
-			addField;
+			addIntegerField;
 			addIntegerField.
 		skip ifTrue: [ reader skipEmptyLines ].
 		error := [
@@ -176,20 +188,20 @@ SimdCSVErrorTest >> testPlacesInRandomTexts [
 				         each text = 'x'
 					         ifTrue: [ each ]
 					         ifFalse: [ each resume: 0 ] ].
-		self assert: error position equals: start first + 2.
+		self assert: error position equals: start first + (field - 1 * 2).
 		self assert: error line equals: (self place: start first in: text).
 		self assert: error record equals: start second.
 		table := SimdCSVTable on: text dialect: (SimdCSVDialect comma hasHeader: false; skipEmptyLines: skip; yourself).
 		table columnCount = 2 ifTrue: [
 			error := [
-			         table column: 2 as: #integer.
+			         table column: field as: #integer.
 			         nil ]
 				         on: SimdCSVConversionError
 				         do: [ :each |
 					         each text = 'x'
 						         ifTrue: [ each ]
 						         ifFalse: [ each resume: 0 ] ].
-			self assert: error position equals: start first + 2.
+			self assert: error position equals: start first + (field - 1 * 2).
 			self assert: error line equals: (self place: start first in: text).
 			self assert: error record equals: start second ] ]
 ]

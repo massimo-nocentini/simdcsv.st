@@ -135,7 +135,13 @@ SimdCSVDeliveryTest >> testSkipFailedRecordWithoutFailure [
 	reader skipFailedRecord.
 	self assert: reader next equals: #( 'b' ).
 	reader skipFailedRecord.
-	self assert: reader atEnd
+	self assert: reader atEnd.
+	reader := self reader: (self lines: #( 'a' 'b' 'c,d' )).
+	reader fieldCount: 1; beStrict.
+	self assert: reader next equals: #( 'a' ).
+	reader skipFailedRecord.
+	self assert: reader next equals: #( 'b' ).
+	self assert: [ reader next ] signals: SimdCSVFieldCountMismatch
 ]
 
 { #category : 'tests' }
@@ -163,6 +169,7 @@ SimdCSVDeliveryTest >> testResourceErrorIsPassedToTheEnd [
 			2 timesRepeat: [ self assert: [ reader next ] signals: SimdCSVResourceError ].
 			reader skipFailedRecord.
 			self assert: reader atEnd.
+			self assert: reader recordNumber equals: 2.
 			self assert: reader upToEnd equals: #(  ) ] ]
 ]
 
@@ -407,6 +414,76 @@ SimdCSVDeliveryTest >> testBeStrictIsOfTheFirstRecordAfterwards [
 	self deny: reader atEnd.
 	reader emptyFieldValue: ''.
 	self assert: reader upToEnd equals: #( #( 'b' 'c' ) #( 'd' 'e' ) )
+]
+
+{ #category : 'tests' }
+SimdCSVDeliveryTest >> testBeStrictAcrossChanges [
+	"The width of the first record that was answered stays; that of one that was not does not"
+
+	| reader |
+	reader := self reader: (self lines: #( 'a,b' 'c,d' 'e' )).
+	reader beStrict.
+	self assert: reader next equals: #( 'a' 'b' ).
+	reader emptyFieldValue: ''.
+	self assert: reader next equals: #( 'c' 'd' ).
+	reader keepQuotedEmpty.
+	self assert: [ reader next ] signals: SimdCSVFieldCountMismatch.
+	reader := self reader: (self lines: #( 'a,b;c' 'd;e' )).
+	reader beStrict.
+	self deny: reader atEnd.
+	reader separator: $;.
+	self assert: reader upToEnd equals: #( #( 'a,b' 'c' ) #( 'd' 'e' ) )
+]
+
+{ #category : 'tests' }
+SimdCSVDeliveryTest >> testLinesOverChanges [
+	"The line of an error after the dialect was changed, and after a record was passed"
+
+	self batchSizes do: [ :size |
+		| reader error |
+		reader := self reader: '"a' , String lf , 'b",c' , String lf , '"d' , String lf , String lf , '"' , String lf , 'e;f' , String lf , 'x;1'.
+		reader batchBytes: size.
+		reader skip: 2.
+		reader separator: $;; addIntegerField; addField.
+		error := self assert: [ reader next ] signals: SimdCSVConversionError.
+		self assert: error record equals: 3.
+		self assert: error line equals: 6.
+		self assert: error position equals: 15.
+		reader skipFailedRecord.
+		reader quote: $'.
+		error := self assert: [ reader next ] signals: SimdCSVConversionError.
+		self assert: error line equals: 7.
+		self assert: error position equals: 19 ]
+]
+
+{ #category : 'tests' }
+SimdCSVDeliveryTest >> testLinesAfterQuoteError [
+	self batchSizes do: [ :size |
+		| reader error |
+		reader := self reader: 'a' , String lf , '"b' , String lf , '"c' , String crlf , 'd' , String crlf , 'x'.
+		reader batchBytes: size; beStrictQuoting.
+		reader next.
+		error := self assert: [ reader next ] signals: SimdCSVQuoteError.
+		self assert: error line equals: 2.
+		reader skipFailedRecord.
+		reader addIntegerField.
+		error := self assert: [ reader next ] signals: SimdCSVConversionError.
+		self assert: error line equals: 4.
+		self assert: error record equals: 3.
+		self assert: error position equals: 10 ]
+]
+
+{ #category : 'tests' }
+SimdCSVDeliveryTest >> testQuoteErrorAtTheEnd [
+	| reader |
+	{ 'a"' , String cr. 'a"' , String crlf. 'a"' } do: [ :text |
+		{ text. text asByteArray. SimdCSVTestStream on: text } do: [ :source |
+			reader := self reader: source.
+			reader beStrictQuoting.
+			self assert: [ reader next ] signals: SimdCSVQuoteError.
+			reader skipFailedRecord.
+			self assert: reader atEnd.
+			self assert: reader recordNumber equals: 1 ] ]
 ]
 
 { #category : 'tests' }

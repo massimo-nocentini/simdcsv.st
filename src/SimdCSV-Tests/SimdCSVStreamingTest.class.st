@@ -71,7 +71,10 @@ SimdCSVStreamingTest >> testByteOrderMarkInPieces [
 		self assert: (self read: (SimdCSVTestStream on: #[ 239 187 191 97 44 98 ] sizes: { size })) equals: #( #( 'a' 'b' ) ).
 		self assert: (self read: (SimdCSVTestStream on: #[ 239 187 191 ] sizes: { size })) equals: #(  ).
 		self assert: (self read: #[ 239 187 191 97 44 98 ] batch: size) equals: #( #( 'a' 'b' ) ) ].
-	self assert: [ self read: (SimdCSVTestStream on: #[ 239 187 ] sizes: #( 1 )) ] signals: SimdCSVInvalidEncoding
+	self assert: [ self read: (SimdCSVTestStream on: #[ 239 187 ] sizes: #( 1 )) ] signals: SimdCSVInvalidEncoding.
+	self assert: [ self read: #[ 239 187 ] ] signals: SimdCSVInvalidEncoding.
+	self assert: [ self read: #[ 255 ] ] signals: SimdCSVInvalidEncoding.
+	self assert: (self read: #[  ]) equals: #(  )
 ]
 
 { #category : 'tests' }
@@ -156,7 +159,13 @@ SimdCSVStreamingTest >> testNoReadIsWanted [
 	self assert: reader next equals: #( 'g' 'h' ).
 	self assert: stream reads equals: 2.
 	self assert: reader atEnd.
-	self assert: stream reads equals: 3
+	self assert: stream reads equals: 3.
+	stream := SimdCSVTestStream on: 'a,b' , String lf , 'cde' , String lf , 'fghi' , String lf sizes: #( 5 ).
+	reader := self reader: stream.
+	reader next.
+	self assert: stream reads equals: 1.
+	self assert: reader next equals: #( 'cde' ).
+	self assert: stream reads equals: 2
 ]
 
 { #category : 'tests' }
@@ -236,6 +245,7 @@ SimdCSVStreamingTest >> testBufferIsGivenBack [
 		self assert: reader next equals: #( 'b' ).
 		self assert: reader next first size equals: 1000.
 		self assert: (reader instVarNamed: #input) source size >= 1000.
+		self deny: (reader instVarNamed: #input) source class == WideString.
 		self assert: reader upToEnd last equals: #( 'h' ).
 		self assert: (reader instVarNamed: #input) source size equals: 16 ]
 ]
