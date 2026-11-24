@@ -275,3 +275,131 @@ SimdCSVBackendTest >> testSmalltalkInfo [
 	self assert: info first equals: 1.
 	self assert: info fourth equals: 'smalltalk'
 ]
+
+{ #category : 'helpers' }
+SimdCSVBackendTest >> boundedRows: aString free: aCollection canGrow: aBoolean [
+	"{ the answer, or the class of the error. what was done. the row }"
+
+	| bytes index rows word answer |
+	bytes := aString asByteArray.
+	index := WordArray new: 70000.
+	rows := Array new: 1.
+	word := SimdCSVDialect comma wordFor: bytes final: true lines: false exact: false.
+	answer := SimdCSVBackend index: bytes base: 1 from: 1 to: bytes size dialect: word into: index from: 1.
+	SimdCSVTestBoundedBackend free: aCollection canGrow: aBoolean.
+	answer := [
+	          SimdCSVTestBoundedBackend
+		          rows: bytes
+		          base: 1
+		          to: bytes size
+		          dialect: word
+		          index: index
+		          from: 1
+		          to: (answer at: 2)
+		          types: nil
+		          fieldCount: 0
+		          into: rows
+		          from: 1
+		          empty: nil
+		          budget: 4194304 ]
+		          on: OutOfMemory
+		          do: [ :error | error return: error class ].
+	^ {
+		  answer.
+		  SimdCSVTestBoundedBackend log.
+		  rows first }
+]
+
+{ #category : 'tests' }
+SimdCSVBackendTest >> testBoundedRoom [
+	"Nothing is done where there is room; else the memory grows, or all the garbage is collected"
+
+	| answer |
+	answer := self boundedRows: 'a,b' free: #( 2000000 ) canGrow: false.
+	self assert: answer second equals: #(  ).
+	self assert: answer third equals: #( 'a' 'b' ).
+	answer := self boundedRows: 'a,b' free: #( 1000000 ) canGrow: true.
+	self assert: answer second equals: { (#grow -> 16777216) }.
+	self assert: answer third equals: #( 'a' 'b' ).
+	answer := self boundedRows: 'a,b' free: #( 1000000 2000000 ) canGrow: false.
+	self assert: (answer second collect: [ :each | each key ]) equals: #( #grow #collect ).
+	self assert: answer third equals: #( 'a' 'b' ).
+	"little is left: the record fits"
+	answer := self boundedRows: 'a,b' free: #( 1000000 ) canGrow: false.
+	self assert: (answer second collect: [ :each | each key ]) equals: #( #grow #collect ).
+	self assert: answer third equals: #( 'a' 'b' )
+]
+
+{ #category : 'tests' }
+SimdCSVBackendTest >> testBoundedRecord [
+	"A record that does not fit, of which the plugin tells the size, is not begun; the bound of its size is 4 bytes for a byte"
+
+	| text answer |
+	text := String new: 3000000 withAll: $x.
+	answer := self boundedRows: text , ',y' free: #( 2500000 ) canGrow: false.
+	self assert: answer first equals: OutOfMemory.
+	self assert: answer third isNil.
+	self assert: answer second first key equals: #grow.
+	self assert: (answer second first value between: 12000000 and: 16777216).
+	self assert: answer second second key equals: #collect.
+	answer := self boundedRows: text , ',y' free: #( 5000000 ) canGrow: false.
+	SimdCSVBackend current == SimdCSVPrimitives ifTrue: [
+		self assert: answer third second equals: 'y' ].
+	answer := self boundedRows: text , ',y' free: #( 20000000 ) canGrow: false.
+	self assert: answer second equals: #(  ).
+	self assert: answer third second equals: 'y'
+]
+
+{ #category : 'tests' }
+SimdCSVBackendTest >> testBoundedArguments [
+	"What is not an index is left to the backend"
+
+	SimdCSVTestBoundedBackend free: #( 0 ) canGrow: false.
+	self
+		should: [
+			SimdCSVTestBoundedBackend
+				rows: #[ 97 ]
+				base: 1
+				to: 1
+				dialect: 44
+				index: 'abcd'
+				from: 1
+				to: 1
+				types: nil
+				fieldCount: 0
+				into: (Array new: 1)
+				from: 1
+				empty: nil
+				budget: -1 ]
+		raise: SimdCSVArgumentError
+]
+
+{ #category : 'tests' }
+SimdCSVBackendTest >> testMeasureOnly [
+	"The budget -2 makes nothing, and answers the bytes of the objects of the first record"
+
+	| bytes index rows word answer |
+	SimdCSVBackend current == SimdCSVPrimitives ifFalse: [ ^ self ].
+	bytes := ('abc,' , (String new: 1000 withAll: $x) , ',' , String lf , 'd') asByteArray.
+	index := WordArray new: 4.
+	rows := Array new: 2.
+	word := SimdCSVDialect comma wordFor: bytes final: true lines: false exact: false.
+	SimdCSVBackend index: bytes base: 1 from: 1 to: bytes size dialect: word into: index from: 1.
+	answer := SimdCSVPrimitives
+		          rows: bytes
+		          base: 1
+		          to: bytes size
+		          dialect: word
+		          index: index
+		          from: 1
+		          to: 4
+		          types: nil
+		          fieldCount: 0
+		          into: rows
+		          from: 1
+		          wideStringClass: WideString
+		          empty: nil
+		          budget: -2.
+	self assert: answer equals: { SimdCSVBackend statusNoRoom. 0. 1. 0. 0. 0. 0. 0. (32 + 16 + 1008) }.
+	self assert: rows equals: #( nil nil )
+]

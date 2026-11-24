@@ -180,7 +180,8 @@ SimdCSVStreamingTest >> testSmallFirstReads [
 		next.
 	self assert: stream position equals: 4096.
 	reader skip: 455.
-	self assert: stream position equals: 4096 + 8192.
+	"the tail is in the buffer of 8 KiB, too"
+	self assert: stream position equals: 4096 + 8191.
 	reader upToEnd.
 	self assert: stream reads equals: 5.
 	file := FileSystem memory / 'a.csv'.
@@ -282,4 +283,152 @@ SimdCSVStreamingTest >> testStreamsOfOtherProtocols [
 	| stream |
 	stream := SimdCSVTestNextStream on: #[ 97 44 98 10 99 ].
 	self assert: (self read: stream) equals: #( #( 'a' 'b' ) #( 'c' ) )
+]
+
+{ #category : 'helpers' }
+SimdCSVStreamingTest >> bufferOf: aReader [
+	"The size of its buffer"
+
+	^ (aReader instVarNamed: 'input') source size
+]
+
+{ #category : 'tests' }
+SimdCSVStreamingTest >> testBufferSize [
+	"A small source takes a small buffer, a large one grows it to a batch"
+
+	| reader file stream |
+	reader := self reader: (SimdCSVTestStream on: #[ 97 44 98 ]).
+	self assert: reader next equals: #( 'a' 'b' ).
+	self assert: (self bufferOf: reader) equals: 4096.
+	file := FileSystem memory / 'a.csv'.
+	file binaryWriteStreamDo: [ :out | out nextPutAll: #[ 97 44 98 ] ].
+	reader := self reader: file.
+	self assert: reader next equals: #( 'a' 'b' ).
+	self assert: (self bufferOf: reader) equals: 4096.
+	file := FileSystem memory / 'b.csv'.
+	file binaryWriteStreamDo: [ :out | 1000 timesRepeat: [ out nextPutAll: #[ 97 44 98 99 100 10 ] ] ].
+	reader := self reader: file.
+	self assert: reader next equals: #( 'a' 'bcd' ).
+	self assert: (self bufferOf: reader) equals: 6001.
+	stream := SimdCSVTestStream on: (self lines: ((1 to: 60000) collect: [ :i | '123456789' ])) asByteArray.
+	reader := self reader: stream.
+	reader batchBytes: 65536.
+	self assert: reader upToEnd size equals: 60000.
+	self assert: (self bufferOf: reader) equals: 65536
+]
+
+{ #category : 'tests' }
+SimdCSVStreamingTest >> testFileWhoseSizeIsWrong [
+	"A file that grows while it is read, or that does not tell its size"
+
+	#( 0 10 3000 1000000 ) do: [ :size |
+		| bytes input reader |
+		bytes := (self lines: ((1 to: 3000) collect: [ :i | i printString ])) asByteArray.
+		input := SimdCSVStreamInput new
+			         setInput: (SimdCSVTestStream on: bytes) characters: false file: true;
+			         fileSize: size;
+			         yourself.
+		input batchUnits: 65536 maxUnits: 1000000.
+		reader := self reader: #[  ].
+		reader instVarNamed: 'input' put: input.
+		self assert: (reader upToEnd collect: [ :row | row first asInteger ]) equals: (1 to: 3000) asArray ]
+]
+
+{ #category : 'tests' }
+SimdCSVStreamingTest >> testSocket [
+	"The records that have arrived are there before one waits for more, and no more is asked for than has arrived"
+
+	{ SimdCSVTestSocket. SimdCSVTestBufferedSocket } do: [ :class |
+		#( true false ) do: [ :binary |
+			#( true false ) do: [ :signals |
+				| socket reader |
+				socket := class on: (#( 'a,b' '1,2' '3' ) collect: [ :each |
+						           | text |
+						           text := each , (each = '3'
+							                   ifTrue: [ '' ]
+							                   ifFalse: [ String lf ]).
+						           binary
+							           ifTrue: [ text asByteArray ]
+							           ifFalse: [ text ] ]).
+				socket signalsClosed: signals.
+				reader := self reader: socket.
+				self assert: reader next equals: #( 'a' 'b' ).
+				self assert: socket waits equals: 1.
+				self assert: reader next equals: #( '1' '2' ).
+				self assert: socket waits equals: 2.
+				self assert: reader next equals: #( '3' ).
+				self assert: reader next isNil.
+				self assert: reader atEnd ] ] ]
+]
+
+{ #category : 'tests' }
+SimdCSVStreamingTest >> testSocketOfPieces [
+	"Records in pieces, pieces of several records, and a byte order mark in pieces"
+
+	{ SimdCSVTestSocket. SimdCSVTestBufferedSocket } do: [ :class |
+		| text bytes expected |
+		text := (String with: (Character codePoint: 16rFEFF)) , (self lines: ((1 to: 300) collect: [ :i | i printString , ',"' , i printString , String lf , '"' ])).
+		bytes := text utf8Encoded.
+		expected := (1 to: 300) asArray collect: [ :i |
+			            {
+				            i printString.
+				            (i printString , String lf) } ].
+		#( 1 2 3 7 1000 5000 ) do: [ :size |
+			| pieces |
+			pieces := (1 to: bytes size by: size) collect: [ :i | bytes copyFrom: i to: (i + size - 1 min: bytes size) ].
+			self assert: (self reader: (class on: pieces)) upToEnd equals: expected ] ]
+]
+
+{ #category : 'tests' }
+SimdCSVStreamingTest >> testSocketOfOneByte [
+	"A first record of one byte is there when it and its line end have arrived: no byte order mark is waited for"
+
+	| socket reader |
+	socket := SimdCSVTestSocket on: { #[ 49 10 ]. #[ 50 10 ] }.
+	reader := self reader: socket.
+	self assert: reader next equals: #( '1' ).
+	self assert: socket waits equals: 1
+]
+
+{ #category : 'tests' }
+SimdCSVStreamingTest >> testWideSeparator [
+	"A separator beyond U+00FF, also where no character before it is"
+
+	| separator text dialect |
+	separator := Character codePoint: 16rFF0C.
+	text := (String new: 5000 withAll: $a) , (String with: separator) , 'b' , String lf , 'c' , (String with: separator).
+	dialect := SimdCSVDialect new
+		           separator: separator;
+		           yourself.
+	{ text. text readStream. (SimdCSVTestStream on: text). (ZnCharacterReadStream on: (text encodeWith: 'utf16') readStream encoding: 'utf16') } do: [ :source |
+		self assert: (SimdCSV rowsFrom: source dialect: dialect) equals: {
+				{
+					(String new: 5000 withAll: $a).
+					'b' }.
+				#( 'c' nil ) } ].
+	"a String without it, and a reader whose separator changes"
+	{ 'ab'. #ab. 'ab' readStream. (SimdCSVTestStream on: 'ab') } do: [ :source |
+		self assert: (SimdCSV rowsFrom: source dialect: dialect) equals: #( #( 'ab' ) ) ].
+	self assert: (SimdCSV count: 'ab' dialect: dialect) equals: 1.
+	self assert: (SimdCSV separatorOffsetsIn: 'ab' dialect: dialect) asArray equals: #( 2 ).
+	dialect hasHeader: false.
+	self assert: (SimdCSV tableFrom: 'ab' dialect: dialect) asArray equals: #( #( 'ab' ) ).
+	{ (String new: 5000 withAll: $a) , String lf , 'b,c'. (SimdCSVTestStream on: (String new: 5000 withAll: $a) , String lf , 'b,c') } do: [ :source |
+		| reader |
+		reader := self reader: source.
+		self assert: reader next first size equals: 5000.
+		reader separator: separator.
+		self assert: reader next equals: #( 'b,c' ) ]
+]
+
+{ #category : 'tests' }
+SimdCSVStreamingTest >> testDirectory [
+	"A directory is no source"
+
+	| directory |
+	directory := FileSystem memory / 'directory'.
+	directory ensureCreateDirectory.
+	self assert: [ SimdCSV rowsFrom: directory ] signals: SimdCSVArgumentError.
+	self assert: [ SimdCSV count: directory ] signals: SimdCSVArgumentError.
+	self assert: [ SimdCSV tableFrom: directory ] signals: SimdCSVArgumentError
 ]

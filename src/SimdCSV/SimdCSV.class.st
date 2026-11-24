@@ -134,6 +134,8 @@ SimdCSV class >> separatorOffsetsIn: aCollection dialect: aDialect [
 	units := aCollection isSymbol
 		         ifTrue: [ aCollection asString ]
 		         ifFalse: [ aCollection ].
+	(units isString and: [ units isWideString not and: [ aDialect separator asInteger > 255 ] ]) ifTrue: [
+		units := SimdCSVInput wideCopyOf: units to: units size ].
 	units size > SimdCSVTable maxInputUnits ifTrue: [
 		^ SimdCSVResourceError new
 			  kind: #inputUnits;
@@ -186,13 +188,18 @@ SimdCSV class >> bytesFrom: rows dialect: aDialect [
 
 { #category : 'writing' }
 SimdCSV class >> write: rows to: aStream [
-	"Write rows to a stream of characters, or of bytes in UTF-8"
+	"Write rows to a stream of characters, or of bytes in UTF-8, or to a new file"
 
 	self write: rows to: aStream dialect: SimdCSVDialect comma
 ]
 
 { #category : 'writing' }
 SimdCSV class >> write: rows to: aStream dialect: aDialect [
+	"Write rows to a stream; or to a FileReference, whose file is replaced, as bytes"
+
+	(aStream isKindOf: AbstractFileReference) ifTrue: [
+		aStream ensureDelete.
+		^ aStream binaryWriteStreamDo: [ :stream | self write: rows to: stream dialect: aDialect ] ].
 	(SimdCSVWriter on: aStream)
 		dialect: aDialect;
 		nextPutAll: rows

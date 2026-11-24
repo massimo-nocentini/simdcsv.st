@@ -11,7 +11,7 @@ String streamContents: [ :stream |
 		nextPutAll: people ]
 ```
 
-I have the protocol of `NeoCSVWriter`. Without fields declared, a record is what `do:` of the object gives.
+I have the protocol of `NeoCSVWriter`, but for its private messages (`unsupportedNeoSelectors`). Without fields declared, a record is what `do:` of the object gives.
 
 ## Fields
 
@@ -26,7 +26,17 @@ I have the protocol of `NeoCSVWriter`. Without fields declared, a record is what
 
 - `fieldWriter: #quoted` (the default) puts quotes around each text; an empty String is an empty quoted field.
 - `#optionalQuoted` does so only where it is needed: for a separator, a quote or a line end in the text, for an empty String, and for a first field of the output that begins with U+FEFF, which would be a byte order mark.
-- `#raw` never does, and refuses (`SimdCSVArgumentError`) a text that would not read back; `beUnchecked` writes it nevertheless. It is the only one, and the default, for a dialect without a quote.
+- `#raw` never does, and refuses (`SimdCSVArgumentError`) a text that would not read back; `beUnchecked` writes it nevertheless. It is the default for a dialect without a quote.
+- `#object` is `#raw` of what `printString` answers.
+
+A field has the writer of `fieldWriter:`, or one of its own: `addQuotedField:`, `addOptionalQuotedField:`, `addRawField:`, `addObjectField:`, their forms with `At:`, and those of several fields.
+
+## Not as NeoCSVWriter
+
+- An empty field (`emptyFieldValue`, nil by default) is not quoted; `NeoCSVWriter` writes two quotes for it with `#quoted`.
+- Lines end with LF by default, on every platform.
+- `addFieldAt:` and the others with `At:` write an empty field for a key that is missing.
+- A text that would not read back is refused, and numbers are written as the table above says.
 
 A record of one empty field is written as an empty quoted field, as a blank line may be none; with `keepQuotedEmpty: true` it is a blank line. A record without fields is refused. Nothing of a record that is refused is written.
 
@@ -50,6 +60,8 @@ Class {
 		'checked',
 		'atStart',
 		'buffer',
+		'byteBuffer',
+		'wideBuffer',
 		'fieldsDone'
 	],
 	#category : 'SimdCSV-Writing',
@@ -64,6 +76,19 @@ SimdCSVWriter class >> on: aStream [
 		  yourself
 ]
 
+{ #category : 'accessing' }
+SimdCSVWriter class >> unsupportedNeoSelectors [
+	"The selectors of NeoCSVWriter that I do not have: the private ones"
+
+	^ #( #addFieldAccessor: #writeEndOfLine #writeField: #writeFieldsUsingAccessors: #writeFieldsUsingDo: #writeObjectField:
+	     #writeOptionalQuotedField: #writeQuotedField: #writeRawField: #writeSeparator )
+]
+
+{ #category : 'accessing' }
+SimdCSVWriter class >> fieldWriters [
+	^ #( #quoted #optionalQuoted #raw #object )
+]
+
 { #category : 'initialization' }
 SimdCSVWriter >> initialize [
 	super initialize.
@@ -71,11 +96,13 @@ SimdCSVWriter >> initialize [
 	lineEnd := String lf.
 	unchecked := checked := false.
 	atStart := true.
-	buffer := (String new: 256) writeStream
+	buffer := byteBuffer := (String new: 256) writeStream
 ]
 
 { #category : 'initialization' }
 SimdCSVWriter >> on: aStream [
+	(aStream isKindOf: AbstractFileReference) ifTrue: [
+		^ SimdCSVArgumentError signal: 'A stream is written to; SimdCSV write:to: takes a FileReference too' ].
 	stream := aStream.
 	isBinary := (aStream respondsTo: #isBinary) and: [ aStream isBinary ]
 ]
@@ -122,10 +149,10 @@ SimdCSVWriter >> lineEndConvention: aSymbol [
 
 { #category : 'configuration' }
 SimdCSVWriter >> fieldWriter: aSymbol [
-	"#quoted, #optionalQuoted or #raw"
+	"#quoted, #optionalQuoted, #raw or #object"
 
-	(#( #quoted #optionalQuoted #raw ) includes: aSymbol) ifFalse: [
-		^ SimdCSVArgumentError signal: 'The field writer is #quoted, #optionalQuoted or #raw, not ' , aSymbol printString ].
+	(self class fieldWriters includes: aSymbol) ifFalse: [
+		^ SimdCSVArgumentError signal: 'The field writer is #quoted, #optionalQuoted, #raw or #object, not ' , aSymbol printString ].
 	fieldWriter := aSymbol.
 	checked := false
 ]
@@ -141,7 +168,7 @@ SimdCSVWriter >> beUnchecked [
 SimdCSVWriter >> addField: accessor [
 	"A field, the value of accessor (a Symbol or a block) for the object"
 
-	self addFieldBlock: [ :object | accessor value: object ]
+	self addField: accessor writer: nil
 ]
 
 { #category : 'configuration - fields' }
@@ -153,7 +180,7 @@ SimdCSVWriter >> addFields: accessors [
 SimdCSVWriter >> addFieldAt: key [
 	"A field, what the object has at key, empty when it has nothing"
 
-	self addFieldBlock: [ :object | object at: key ifAbsent: [ dialect emptyFieldValue ] ]
+	self addFieldAt: key writer: nil
 ]
 
 { #category : 'configuration - fields' }
@@ -162,13 +189,109 @@ SimdCSVWriter >> addFieldsAt: keys [
 ]
 
 { #category : 'configuration - fields' }
+SimdCSVWriter >> addObjectField: accessor [
+	"A field, the value of accessor for the object, its printString, without quotes"
+
+	self addField: accessor writer: #object
+]
+
+{ #category : 'configuration - fields' }
+SimdCSVWriter >> addObjectFieldAt: key [
+	"A field, what the object has at key, its printString, without quotes"
+
+	self addFieldAt: key writer: #object
+]
+
+{ #category : 'configuration - fields' }
+SimdCSVWriter >> addObjectFields: accessors [
+	accessors do: [ :each | self addObjectField: each ]
+]
+
+{ #category : 'configuration - fields' }
+SimdCSVWriter >> addObjectFieldsAt: keys [
+	keys do: [ :each | self addObjectFieldAt: each ]
+]
+
+{ #category : 'configuration - fields' }
+SimdCSVWriter >> addOptionalQuotedField: accessor [
+	"A field, the value of accessor for the object, with quotes where they are needed"
+
+	self addField: accessor writer: #optionalQuoted
+]
+
+{ #category : 'configuration - fields' }
+SimdCSVWriter >> addOptionalQuotedFieldAt: key [
+	"A field, what the object has at key, with quotes where they are needed"
+
+	self addFieldAt: key writer: #optionalQuoted
+]
+
+{ #category : 'configuration - fields' }
+SimdCSVWriter >> addOptionalQuotedFields: accessors [
+	accessors do: [ :each | self addOptionalQuotedField: each ]
+]
+
+{ #category : 'configuration - fields' }
+SimdCSVWriter >> addOptionalQuotedFieldsAt: keys [
+	keys do: [ :each | self addOptionalQuotedFieldAt: each ]
+]
+
+{ #category : 'configuration - fields' }
+SimdCSVWriter >> addQuotedField: accessor [
+	"A field, the value of accessor for the object, with quotes"
+
+	self addField: accessor writer: #quoted
+]
+
+{ #category : 'configuration - fields' }
+SimdCSVWriter >> addQuotedFieldAt: key [
+	"A field, what the object has at key, with quotes"
+
+	self addFieldAt: key writer: #quoted
+]
+
+{ #category : 'configuration - fields' }
+SimdCSVWriter >> addQuotedFields: accessors [
+	accessors do: [ :each | self addQuotedField: each ]
+]
+
+{ #category : 'configuration - fields' }
+SimdCSVWriter >> addQuotedFieldsAt: keys [
+	keys do: [ :each | self addQuotedFieldAt: each ]
+]
+
+{ #category : 'configuration - fields' }
+SimdCSVWriter >> addRawField: accessor [
+	"A field, the value of accessor for the object, without quotes"
+
+	self addField: accessor writer: #raw
+]
+
+{ #category : 'configuration - fields' }
+SimdCSVWriter >> addRawFieldAt: key [
+	"A field, what the object has at key, without quotes"
+
+	self addFieldAt: key writer: #raw
+]
+
+{ #category : 'configuration - fields' }
+SimdCSVWriter >> addRawFields: accessors [
+	accessors do: [ :each | self addRawField: each ]
+]
+
+{ #category : 'configuration - fields' }
+SimdCSVWriter >> addRawFieldsAt: keys [
+	keys do: [ :each | self addRawFieldAt: each ]
+]
+
+{ #category : 'configuration - fields' }
 SimdCSVWriter >> addConstantField: anObject [
-	self addFieldBlock: [ :object | anObject ]
+	self addFieldBlock: [ :object | self put: anObject ]
 ]
 
 { #category : 'configuration - fields' }
 SimdCSVWriter >> addEmptyField [
-	self addFieldBlock: [ :object | dialect emptyFieldValue ]
+	self addFieldBlock: [ :object | self put: dialect emptyFieldValue ]
 ]
 
 { #category : 'configuration - fields' }
@@ -196,7 +319,7 @@ SimdCSVWriter >> nextPut: anObject [
 	self begin.
 	fields
 		ifNil: [ anObject do: [ :each | self put: each ] ]
-		ifNotNil: [ fields do: [ :each | self put: (each value: anObject) ] ].
+		ifNotNil: [ fields do: [ :each | each value: anObject ] ].
 	self end
 ]
 
@@ -220,9 +343,22 @@ SimdCSVWriter >> close [
 
 { #category : 'private' }
 SimdCSVWriter >> addFieldBlock: aBlock [
+	"aBlock puts a field of its argument"
+
 	fields := fields
 		          ifNil: [ { aBlock } ]
 		          ifNotNil: [ fields copyWith: aBlock ]
+]
+
+{ #category : 'private' }
+SimdCSVWriter >> addField: accessor writer: aSymbolOrNil [
+	self addFieldBlock: [ :object | self put: (accessor value: object) writer: (aSymbolOrNil ifNil: [ self writerKind ]) ]
+]
+
+{ #category : 'private' }
+SimdCSVWriter >> addFieldAt: key writer: aSymbolOrNil [
+	self addFieldBlock: [ :object |
+		self put: (object at: key ifAbsent: [ dialect emptyFieldValue ]) writer: (aSymbolOrNil ifNil: [ self writerKind ]) ]
 ]
 
 { #category : 'private' }
@@ -231,6 +367,13 @@ SimdCSVWriter >> writerKind [
 		  dialect quote
 			  ifNil: [ #raw ]
 			  ifNotNil: [ #quoted ] ]
+]
+
+{ #category : 'private' }
+SimdCSVWriter >> isQuoting: aSymbol [
+	"Does that field writer put quotes?"
+
+	^ aSymbol == #quoted or: [ aSymbol == #optionalQuoted ]
 ]
 
 { #category : 'private' }
@@ -245,7 +388,7 @@ SimdCSVWriter >> check [
 		final: false
 		lines: false
 		exact: false.
-	(dialect quote isNil and: [ self writerKind ~~ #raw ]) ifTrue: [ self refuse: 'A dialect without a quote needs the field writer #raw' ].
+	(dialect quote isNil and: [ self isQuoting: self writerKind ]) ifTrue: [ self refuse: 'A dialect without a quote needs the field writer #raw' ].
 	(dialect lineEnd == #lf and: [ lineEnd ~= String lf and: [ unchecked not ] ]) ifTrue: [ self refuse: 'The records of the dialect end with LF only' ].
 	checked := true
 ]
@@ -258,8 +401,21 @@ SimdCSVWriter >> refuse: aString [
 { #category : 'private' }
 SimdCSVWriter >> begin [
 	self check.
+	buffer := byteBuffer.
 	buffer reset.
+	dialect separator asInteger > 255 ifTrue: [ self widen ].
 	fieldsDone := 0
+]
+
+{ #category : 'private' }
+SimdCSVWriter >> widen [
+	"The record has a character beyond U+00FF: it goes on in a buffer of wide characters, which is kept, as a ByteString that becomes wide for each record takes microseconds"
+
+	buffer == wideBuffer ifTrue: [ ^ self ].
+	wideBuffer ifNil: [ wideBuffer := (WideString new: 256) writeStream ].
+	wideBuffer reset.
+	buffer := wideBuffer.
+	buffer nextPutAll: byteBuffer contents
 ]
 
 { #category : 'private' }
@@ -274,8 +430,7 @@ SimdCSVWriter >> end [
 	stream nextPutAll: (isBinary
 			 ifTrue: [ self encode: text ]
 			 ifFalse: [ text ]).
-	atStart := false.
-	text isWideString ifTrue: [ buffer := (String new: 256) writeStream ]
+	atStart := false
 ]
 
 { #category : 'private' }
@@ -298,23 +453,33 @@ SimdCSVWriter >> encode: aString [
 
 { #category : 'private' }
 SimdCSVWriter >> put: anObject [
-	"The next field of the record"
+	"The next field of the record, by the field writer"
 
-	fieldsDone > 0 ifTrue: [ buffer nextPut: dialect separator ].
-	fieldsDone := fieldsDone + 1.
-	anObject = dialect emptyFieldValue ifTrue: [ ^ self ].
-	self putText: (self textOf: anObject)
+	self put: anObject writer: self writerKind
 ]
 
 { #category : 'private' }
-SimdCSVWriter >> putText: aString [
-	| kind |
-	kind := self writerKind.
-	kind == #quoted ifTrue: [ ^ self putQuoted: aString ].
-	kind == #raw ifTrue: [
+SimdCSVWriter >> put: anObject writer: aSymbol [
+	"The next field of the record"
+
+	| text |
+	fieldsDone > 0 ifTrue: [ buffer nextPut: dialect separator ].
+	fieldsDone := fieldsDone + 1.
+	anObject = dialect emptyFieldValue ifTrue: [ ^ self ].
+	text := aSymbol == #object
+		        ifTrue: [ anObject printString ]
+		        ifFalse: [ self textOf: anObject ].
+	text isWideString ifTrue: [ self widen ].
+	self putText: text writer: aSymbol
+]
+
+{ #category : 'private' }
+SimdCSVWriter >> putText: aString writer: aSymbol [
+	(self isQuoting: aSymbol) ifFalse: [
 		(unchecked or: [ self isReadBack: aString ]) ifFalse: [ ^ self refuse: 'The text would not read back without quotes: ' , aString printString ].
 		^ buffer nextPutAll: aString ].
-	(self needsQuotes: aString)
+	dialect quote ifNil: [ ^ self refuse: 'A dialect without a quote needs the field writer #raw' ].
+	(aSymbol == #quoted or: [ self needsQuotes: aString ])
 		ifTrue: [ self putQuoted: aString ]
 		ifFalse: [ buffer nextPutAll: aString ]
 ]

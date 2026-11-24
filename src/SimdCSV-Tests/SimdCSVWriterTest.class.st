@@ -60,7 +60,7 @@ SimdCSVWriterTest >> testWithoutQuote [
 
 { #category : 'tests' }
 SimdCSVWriterTest >> testBadArguments [
-	self assert: [ self write: #(  ) with: [ :writer | writer fieldWriter: #object ] ] signals: SimdCSVArgumentError.
+	self assert: [ self write: #(  ) with: [ :writer | writer fieldWriter: #quote ] ] signals: SimdCSVArgumentError.
 	self assert: [ self write: #(  ) with: [ :writer | writer lineEndConvention: #any ] ] signals: SimdCSVArgumentError.
 	self assert: [ self write: #( #( 'a' ) ) with: [ :writer | writer separator: $" ] ] signals: SimdCSVArgumentError.
 	self assert: [ self write: #( #( 'a' ) ) with: [ :writer | writer separator: Character cr ] ] signals: SimdCSVArgumentError.
@@ -310,4 +310,95 @@ SimdCSVWriterTest >> testRawReadsBack [
 			self assert: (SimdCSV rowsFrom: string dialect: dialect) equals: rows.
 			self assert: (SimdCSV rowsFrom: string utf8Encoded dialect: dialect) equals: rows ] ].
 	self assert: written > (rounds // 15)
+]
+
+{ #category : 'tests' }
+SimdCSVWriterTest >> testFieldWriters [
+	"A field may have a writer of its own"
+
+	| dictionary |
+	self
+		assert: (self write: #( #( 'a' 'b c' ) #( 'd,' nil ) ) with: [ :writer |
+				 writer
+					 addQuotedField: #first;
+					 addOptionalQuotedField: #first;
+					 addRawField: [ :row | row first first ];
+					 addObjectField: [ :row | row size ];
+					 addField: #second ])
+		equals: '"a",a,a,2,"b c"' , String lf , '"d,","d,",d,2,' , String lf.
+	dictionary := {
+		              (#x -> 'a').
+		              (#y -> #b) } asDictionary.
+	self
+		assert: (self write: { dictionary } with: [ :writer |
+				 writer
+					 addQuotedFieldsAt: #( x z );
+					 addOptionalQuotedFieldsAt: #( x );
+					 addRawFieldsAt: #( x );
+					 addObjectFieldsAt: #( y );
+					 addQuotedFields: { #size };
+					 addOptionalQuotedFields: { #size };
+					 addRawFields: { #size };
+					 addObjectFields: { #size };
+					 addQuotedFieldAt: #x;
+					 addOptionalQuotedFieldAt: #x;
+					 addRawFieldAt: #x;
+					 addObjectFieldAt: #y ])
+		equals: '"a",,a,a,#b,"2",2,2,2,"a",a,a,#b' , String lf.
+	self assert: (self write: #( #( $a 1 ) ) with: [ :writer | writer fieldWriter: #object ]) equals: '$a,1' , String lf.
+	self assert: [ self write: #( #( 'a,' ) ) with: [ :writer | writer addObjectField: #first ] ] signals: SimdCSVArgumentError.
+	self assert: [ self write: #( 1 ) with: [ :writer | writer quote: nil; addQuotedField: #yourself ] ] signals: SimdCSVArgumentError.
+	self assert: (self write: #( 1 ) with: [ :writer | writer quote: nil; addRawField: #yourself ]) equals: '1' , String lf
+]
+
+{ #category : 'tests' }
+SimdCSVWriterTest >> testWideRecords [
+	"Records with characters beyond U+00FF between others: the buffer of wide characters is kept, and the other records are written from the other one"
+
+	| rows writer text wide buffer |
+	wide := String with: (Character codePoint: 16r4E2D).
+	rows := #( #( 'abc' 'def' ) ) , {
+		        {
+			        'abc'.
+			        ('x' , wide , '"y').
+			        'def' } } , #( #( 'ghi' '' ) ) , {
+		        {
+			        wide.
+			        nil } } , #( #( 'a,b' ) ).
+	text := String streamContents: [ :out | (SimdCSVWriter on: out) nextPutAll: rows ].
+	self assert: text equals: (self lines: {
+				 '"abc","def"'.
+				 ('"abc","x' , wide , '""y","def"').
+				 '"ghi",""'.
+				 ('"' , wide , '",').
+				 '"a,b"' }).
+	self assert: (SimdCSV bytesFrom: rows) equals: text utf8Encoded.
+	writer := SimdCSVWriter on: (String new writeStream).
+	writer nextPut: rows second.
+	buffer := writer instVarNamed: 'wideBuffer'.
+	writer
+		nextPut: rows first;
+		nextPut: rows second.
+	self assert: (writer instVarNamed: 'wideBuffer') identicalTo: buffer.
+	self assert: (writer instVarNamed: 'byteBuffer') originalContents class equals: ByteString.
+	writer nextPut: rows first.
+	self assert: (writer instVarNamed: 'buffer') contents class equals: ByteString.
+	"a wide separator"
+	self
+		assert: (self write: rows with: [ :each | each separator: wide first; fieldWriter: #optionalQuoted; emptyFieldValue: 'def' ])
+		equals: 'abc' , wide , String lf , 'abc' , wide , '"x' , wide , '""y"' , wide , String lf , 'ghi' , wide , '""' , String lf , '"' , wide , '"' , wide , 'nil' , String lf , 'a,b' , String lf
+]
+
+{ #category : 'tests' }
+SimdCSVWriterTest >> testFile [
+	"A FileReference is written to as bytes, from its start; a writer takes a stream"
+
+	| file |
+	file := FileSystem memory / 'a.csv'.
+	file writeStreamDo: [ :stream | stream nextPutAll: (String new: 1000 withAll: $x) ].
+	SimdCSV write: #( #( 'a' 1 ) ) to: file.
+	self assert: file contents equals: '"a","1"' , String lf.
+	SimdCSV write: { { (String with: (Character codePoint: 945)) } } to: file dialect: SimdCSVDialect tab.
+	self assert: (file binaryReadStreamDo: [ :stream | stream upToEnd ]) equals: #[ 34 206 177 34 10 ].
+	self assert: [ SimdCSVWriter on: file ] signals: SimdCSVArgumentError
 ]

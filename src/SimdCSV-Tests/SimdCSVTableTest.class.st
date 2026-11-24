@@ -293,3 +293,34 @@ SimdCSVTableTest >> testRandomTables [
 		self assert: table columnCount equals: width.
 		1 to: width do: [ :i | self assert: (table column: i) equals: (rows collect: [ :row | row at: i ]) ] ]
 ]
+
+{ #category : 'tests' }
+SimdCSVTableTest >> testManyErrors [
+	"The cost of an error does not grow with its place"
+
+	| count table lines |
+	count := self largeSize: 20000.
+	table := SimdCSV tableFrom: (self lines: ((1 to: count) collect: [ :i | 'n/a,abcdefgh' ])) asByteArray dialect: (SimdCSVDialect new
+			          hasHeader: false;
+			          yourself).
+	lines := 0.
+	self
+		should: [
+			[ table column: 1 as: #integer ]
+				on: SimdCSVConversionError
+				do: [ :error |
+					lines := lines + error line.
+					error resume: 0 ] ]
+		notTakeMoreThan: 20 seconds.
+	self assert: lines equals: count * (count + 1) / 2.
+	"and back"
+	self assert: (self errorOf: [ table column: 1 as: #integer ]) line equals: 1
+]
+
+{ #category : 'tests' }
+SimdCSVTableTest >> testColumnsInAnotherOrder [
+	| table |
+	table := SimdCSV tableFrom: 'a,b,c,d' , String lf , '1,2,3,4' , String lf , '5,6,7,8'.
+	self assert: (table columns: #( d a c ) as: #( integer string integer )) equals: #( #( 4 8 ) #( '1' '5' ) #( 3 7 ) ).
+	self assert: (table columns: #( 2 1 ) as: #( integer integer )) equals: #( #( 2 6 ) #( 1 5 ) )
+]

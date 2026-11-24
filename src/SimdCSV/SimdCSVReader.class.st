@@ -129,7 +129,16 @@ Class {
 		'emptyMark',
 		'builderEmpty',
 		'firstWidth',
-		'firstWidthRecord'
+		'firstWidthRecord',
+		'positions',
+		'selected',
+		'rowGoal',
+		'indexGoal',
+		'placeRow',
+		'placeSlot',
+		'linesStart',
+		'linesStop',
+		'linesCount'
 	],
 	#classVars : [
 		'EmptyMark'
@@ -180,10 +189,7 @@ SimdCSVReader class >> emptyMark [
 SimdCSVReader class >> isConstrained [
 	"Is the object memory small, as in WebAssembly, or bounded?"
 
-	| info |
-	info := SimdCSVBackend pluginInfo.
-	^ (info notNil and: [ info size >= 5 and: [ (info at: 5) = 'emscripten' ] ]) or: [
-		  ((Smalltalk vm parameterAt: 67) ifNil: [ 0 ]) > 0 ]
+	^ SimdCSVBackend isBounded
 ]
 
 { #category : 'accessing' }
@@ -207,7 +213,6 @@ SimdCSVReader >> initialize [
 	maxRecordBytes := self class defaultMaxRecordBytes.
 	maxFields := self class defaultMaxFields.
 	batchBytes := SimdCSVBackend batchBytes.
-	typedColumns := Dictionary new.
 	indexTo := indexRecords := indexLines := lineBase := 0.
 	slot := 1.
 	rowCount := recordsDone := 0.
@@ -248,6 +253,7 @@ SimdCSVReader >> dialect: aDialect [
 SimdCSVReader >> separator: aCharacter [
 	"The Character between the fields, a comma by default"
 
+	aCharacter = dialect separator ifTrue: [ ^ self ].
 	self changeDialect: [ dialect separator: aCharacter ]
 ]
 
@@ -255,6 +261,7 @@ SimdCSVReader >> separator: aCharacter [
 SimdCSVReader >> quote: aCharacterOrNil [
 	"The Character around quoted fields, a double quote by default, or nil when there are none"
 
+	aCharacterOrNil = dialect quote ifTrue: [ ^ self ].
 	self changeDialect: [ dialect quote: aCharacterOrNil ]
 ]
 
@@ -262,6 +269,7 @@ SimdCSVReader >> quote: aCharacterOrNil [
 SimdCSVReader >> beStrictQuoting [
 	"Signal SimdCSVQuoteError for a quote inside an unquoted field, text after a closing quote and an unterminated quote"
 
+	dialect strictQuoting ifTrue: [ ^ self ].
 	self changeDialect: [ dialect strictQuoting: true ]
 ]
 
@@ -269,6 +277,7 @@ SimdCSVReader >> beStrictQuoting [
 SimdCSVReader >> skipEmptyLines [
 	"A blank line is no record"
 
+	dialect skipEmptyLines ifTrue: [ ^ self ].
 	self changeDialect: [ dialect skipEmptyLines: true ]
 ]
 
@@ -276,6 +285,7 @@ SimdCSVReader >> skipEmptyLines [
 SimdCSVReader >> beStrict [
 	"Signal SimdCSVFieldCountMismatch for a record whose fields are not as many as the declared ones, or as those of the first record"
 
+	dialect strictFieldCount ifTrue: [ ^ self ].
 	self changeConfiguration: [ dialect strictFieldCount: true ]
 ]
 
@@ -283,6 +293,7 @@ SimdCSVReader >> beStrict [
 SimdCSVReader >> keepQuotedEmpty [
 	"A quoted empty field is an empty String, not emptyFieldValue"
 
+	dialect keepQuotedEmpty ifTrue: [ ^ self ].
 	self changeConfiguration: [ dialect keepQuotedEmpty: true ]
 ]
 
@@ -298,6 +309,7 @@ SimdCSVReader >> encoding: aSymbol [
 SimdCSVReader >> emptyFieldValue: anObject [
 	"The value of empty and of missing fields, nil by default. With #passNil the converters get nil for them, and their value is used"
 
+	anObject == dialect emptyFieldValue ifTrue: [ ^ self ].
 	self changeConfiguration: [ dialect emptyFieldValue: anObject ]
 ]
 
@@ -332,7 +344,8 @@ SimdCSVReader >> maxFields: anInteger [
 	"The most fields of a record"
 
 	(anInteger between: 1024 and: 16777216) ifFalse: [ ^ SimdCSVArgumentError signal: 'maxFields: is from 1024 to 16777216' ].
-	maxFields := anInteger
+	maxFields := anInteger.
+	self forgetError: #fields
 ]
 
 { #category : 'configuration - limits' }
@@ -348,6 +361,7 @@ SimdCSVReader >> batchBytes: anInteger [
 SimdCSVReader >> recordClass: anObject [
 	"The class of the records: Array, another class of indexable collections, or with fields declared any class"
 
+	anObject == recordClass ifTrue: [ ^ self ].
 	self changeConfiguration: [ recordClass := anObject ]
 ]
 
@@ -355,6 +369,7 @@ SimdCSVReader >> recordClass: anObject [
 SimdCSVReader >> recordClassIsIndexable: aBoolean [
 	"Are the records collections of their fields? The messages that add a field set this"
 
+	aBoolean == recordClassIsIndexable ifTrue: [ ^ self ].
 	self changeConfiguration: [ recordClassIsIndexable := aBoolean ]
 ]
 
@@ -364,6 +379,7 @@ SimdCSVReader >> fieldCount: anInteger [
 
 	anInteger ifNotNil: [
 		(anInteger between: 1 and: 16777216) ifFalse: [ ^ SimdCSVArgumentError signal: 'fieldCount: is from 1 to 16777216, or nil' ] ].
+	anInteger = fieldCount ifTrue: [ ^ self ].
 	self changeConfiguration: [ fieldCount := anInteger ]
 ]
 
@@ -371,6 +387,7 @@ SimdCSVReader >> fieldCount: anInteger [
 SimdCSVReader >> ifInvalid: aBlock [
 	"The block of the text, the number of the record and the number of the field whose value is the cell, for a text that is not of the type of its column; for each typed column without a block of its own"
 
+	aBlock == invalidBlock ifTrue: [ ^ self ].
 	self changeConfiguration: [ invalidBlock := aBlock ]
 ]
 
@@ -415,9 +432,11 @@ SimdCSVReader >> numberedColumnsConfiguration [
 
 	self refuseWithFields.
 	self configurationChanged.
-	self hasIndexedRecord ifFalse: [ ^ rawHeader := header := #(  ) ].
+	self hasIndexedRecord ifFalse: [
+		rawHeader := #(  ).
+		^ self header: rawHeader ].
 	rawHeader := Array new: (self lastSlotFrom: slot) - slot + 1.
-	header := self namesFrom: rawHeader.
+	self header: (self namesFrom: rawHeader).
 	self changeConfiguration: [
 		fieldCount := header size.
 		recordClass := Dictionary.
@@ -431,18 +450,20 @@ SimdCSVReader >> renameDuplicates [
 	"A name a that comes again in the header is a_2, then a_3"
 
 	self changeConfiguration: [ renameDuplicates := true ].
-	rawHeader ifNotNil: [ header := self namesFrom: rawHeader ]
+	rawHeader ifNotNil: [ self header: (self namesFrom: rawHeader) ]
 ]
 
 { #category : 'configuration - columns' }
 SimdCSVReader >> selectColumns: names [
 	"Take the columns of these names only, in this order"
 
-	| positions |
+	| columnPositions |
 	self refuseWithFields.
-	positions := names asArray collect: [ :each | self positionOfColumn: each ].
-	positions asSet size = positions size ifFalse: [ ^ SimdCSVArgumentError signal: 'A column is selected twice' ].
-	self changeConfiguration: [ selection := positions asOrderedCollection ]
+	columnPositions := names asArray collect: [ :each | self positionOfColumn: each ].
+	columnPositions asSet size = columnPositions size ifFalse: [ ^ SimdCSVArgumentError signal: 'A column is selected twice' ].
+	self changeConfiguration: [
+		selection := columnPositions asOrderedCollection.
+		selected := columnPositions asSet ]
 ]
 
 { #category : 'configuration - columns' }
@@ -644,7 +665,11 @@ SimdCSVReader >> addSymbolFields: count [
 SimdCSVReader >> atEnd [
 	"Is there no record left, nor an error in the place of one?"
 
-	^ self hasRecord not
+	rowNext <= rowCount ifTrue: [ ^ false ].
+	[ slot > indexTo ] whileTrue: [
+		pendingError ifNotNil: [ ^ false ].
+		self indexMore ifFalse: [ ^ true ] ].
+	^ false
 ]
 
 { #category : 'reading' }
@@ -657,8 +682,8 @@ SimdCSVReader >> next [
 	record := rows at: rowNext.
 	needsWork ifTrue: [
 		failed := true.
-		record := self recordFrom: record.
-		failed := false ].
+		record := self recordFrom: record ].
+	failed := false.
 	rows at: rowNext put: nil.
 	rowNext := rowNext + 1.
 	^ record
@@ -666,15 +691,14 @@ SimdCSVReader >> next [
 
 { #category : 'reading' }
 SimdCSVReader >> skip [
-	"Pass a record without reading its fields; nothing at the end"
+	"Pass a record without reading its fields; nothing at the end. No row is built for it"
 
-	self hasRecord ifFalse: [ ^ self ].
-	failed := false.
 	rowNext <= rowCount
 		ifTrue: [ rowNext := rowNext + 1 ]
 		ifFalse: [
-			pendingError first == #build ifFalse: [ ^ self signalPending ].
+			self hasIndexedRecord ifFalse: [ ^ self ].
 			self passIndexedRecord ].
+	failed := false.
 	self recordNumber = firstWidthRecord ifTrue: [
 		firstWidth := firstWidthRecord := nil.
 		self configurationChanged ]
@@ -687,10 +711,12 @@ SimdCSVReader >> skip: count [
 
 { #category : 'reading' }
 SimdCSVReader >> skipFailedRecord [
-	"Pass the record whose error was signalled: up to its end as the lenient rules see it, or to the end of the input when it has none or is beyond a limit. Nothing when no error stands"
+	"Pass the record whose error was signalled: up to its end as the lenient rules see it, or to the end of the input when it has none or is beyond a limit. Nothing when no error was signalled since a record was passed: what comes next is not lost unseen"
 
-	failed ifTrue: [ ^ self skip ].
-	(pendingError isNil or: [ rowNext <= rowCount ]) ifTrue: [ ^ self ].
+	failed ifFalse: [ ^ self ].
+	rowNext <= rowCount ifTrue: [ ^ self skip ].
+	failed := false.
+	pendingError ifNil: [ ^ self ].
 	pendingError first == #build ifTrue: [ ^ self passIndexedRecord ].
 	pendingError first == #index ifTrue: [ ^ self passQuoteError ].
 	self goToEnd
@@ -768,7 +794,9 @@ SimdCSVReader >> nextBatch [
 	batch := rows copyFrom: rowNext to: rowCount.
 	needsWork
 		ifTrue: [ 1 to: batch size do: [ :i | batch at: i put: self next ] ]
-		ifFalse: [ rowNext := rowCount + 1 ].
+		ifFalse: [
+			failed := false.
+			rowNext := rowCount + 1 ].
 	^ batch
 ]
 
@@ -800,17 +828,20 @@ SimdCSVReader >> checkEncoding: aSymbol [
 
 { #category : 'private - configuration' }
 SimdCSVReader >> configurationChanged [
-	"The records that are built but not delivered are built again"
+	"The records that are built but not delivered are built again, a few first: the configuration may change before each record"
 
 	| delivered |
 	planned := false.
 	delivered := rowNext - 1.
-	rowCount > delivered ifTrue: [ slot := self slotAfter: delivered from: rowSlot ].
+	rowCount > delivered ifTrue: [
+		slot := self slotOfRow: delivered.
+		rowGoal := 16 ].
 	recordsDone := recordsDone + delivered.
 	rowCount := 0.
 	rowNext := 1.
 	(firstWidthRecord notNil and: [ firstWidthRecord > recordsDone ]) ifTrue: [ firstWidth := firstWidthRecord := nil ].
-	(pendingError notNil and: [ pendingError first == #build ]) ifTrue: [ pendingError := nil ]
+	(pendingError notNil and: [ pendingError first == #build ]) ifTrue: [ pendingError := nil ].
+	pendingError ifNil: [ failed := false ]
 ]
 
 { #category : 'private - configuration' }
@@ -821,7 +852,7 @@ SimdCSVReader >> changeConfiguration: aBlock [
 
 { #category : 'private - configuration' }
 SimdCSVReader >> changeDialect: aBlock [
-	"What is indexed but not delivered is indexed again, from the start of the next record"
+	"What is indexed but not delivered is indexed again, from the start of the next record, a little first"
 
 	| start |
 	self configurationChanged.
@@ -829,12 +860,15 @@ SimdCSVReader >> changeDialect: aBlock [
 		start := self startOfSlot: slot.
 		lineBase := lineBase + (self linesFrom: base to: start - 1).
 		indexLines := 0.
+		indexGoal := 4096.
 		input advanceTo: start complete: false ].
 	lineBase := lineBase + indexLines.
 	indexTo := indexLines := 0.
 	slot := 1.
-	indexError := nil.
-	(pendingError notNil and: [ pendingError first ~~ #byteOrderMark ]) ifTrue: [ pendingError := nil ].
+	indexError := linesStart := nil.
+	(pendingError notNil and: [ pendingError first ~~ #byteOrderMark ]) ifTrue: [
+		pendingError := nil.
+		failed := false ].
 	started ifTrue: [ input advanceTo: input first complete: false ].
 	aBlock value
 ]
@@ -842,7 +876,16 @@ SimdCSVReader >> changeDialect: aBlock [
 { #category : 'private - configuration' }
 SimdCSVReader >> limitsChanged [
 	input ifNotNil: [ input batchUnits: batchBytes maxUnits: maxRecordBytes ].
-	(pendingError notNil and: [ pendingError first == #recordBytes ]) ifTrue: [ pendingError := nil ]
+	self forgetError: #recordBytes
+]
+
+{ #category : 'private - configuration' }
+SimdCSVReader >> forgetError: aSymbol [
+	"The limit that was passed has changed: what stands there is looked at again"
+
+	(pendingError notNil and: [ pendingError first == aSymbol ]) ifFalse: [ ^ self ].
+	pendingError := nil.
+	failed := false
 ]
 
 { #category : 'private - configuration' }
@@ -852,18 +895,19 @@ SimdCSVReader >> refuseWithFields [
 
 { #category : 'private - configuration' }
 SimdCSVReader >> addColumn: aColumn [
-	(selection notNil or: [ typedColumns notEmpty ]) ifTrue: [
+	(selection notNil or: [ typedColumns notNil ]) ifTrue: [
 		^ SimdCSVArgumentError signal: 'Fields added by position exclude the columns by name' ].
 	self changeConfiguration: [
 		columns ifNil: [
 			columns := OrderedCollection new.
 			namedColumns ifTrue: [
-				header do: [ :each |
+				header withIndexDo: [ :each :position |
 					columns add: ((SimdCSVColumn type: #string)
 							 key: each asSymbol;
+							 position: position;
 							 yourself) ] ] ].
 		columns add: aColumn.
-		columns withIndexDo: [ :each :position | each position: position ] ]
+		aColumn position: columns size ]
 ]
 
 { #category : 'private - configuration' }
@@ -895,8 +939,11 @@ SimdCSVReader >> setColumn: aName to: aColumn [
 		name: (header at: position);
 		position: position.
 	self changeConfiguration: [
+		typedColumns ifNil: [ typedColumns := Dictionary new ].
 		typedColumns at: position put: aColumn.
-		(selection notNil and: [ (selection includes: position) not ]) ifTrue: [ selection add: position ] ]
+		(selection notNil and: [ (selected includes: position) not ]) ifTrue: [
+			selection add: position.
+			selected add: position ] ]
 ]
 
 { #category : 'private - header' }
@@ -904,23 +951,45 @@ SimdCSVReader >> positionOfColumn: aName [
 	"The position of the only column of that name"
 
 	header ifNil: [ ^ SimdCSVArgumentError signal: 'Columns have names after readHeader or namedColumnsConfiguration' ].
-	^ self class positionOf: aName in: header
+	positions ifNil: [ positions := self class positionsIn: header ].
+	^ self class positionOf: aName in: header positions: positions
 ]
 
 { #category : 'private - header' }
 SimdCSVReader class >> positionOf: aName in: names [
 	"The position of aName in names, which must have it once"
 
+	^ self positionOf: aName in: names positions: (self positionsIn: names)
+]
+
+{ #category : 'private - header' }
+SimdCSVReader class >> positionOf: aName in: names positions: aDictionary [
+	"The position of aName in names, which must have it once; aDictionary is their positionsIn:"
+
 	| name position |
 	name := aName asString.
-	position := names indexOf: name.
+	position := aDictionary at: name ifAbsent: [
+		            ^ SimdCSVHeaderError new
+			              kind: #missing;
+			              columnName: name;
+			              signal ].
 	position = 0 ifTrue: [
-		^ SimdCSVHeaderError new
-			  kind: #missing;
-			  columnName: name;
-			  signal ].
-	self signalDuplicateOf: name at: position in: names.
+		position := names indexOf: name.
+		self signalDuplicateOf: name at: position in: names ].
 	^ position
+]
+
+{ #category : 'private - header' }
+SimdCSVReader class >> positionsIn: names [
+	"A Dictionary from each name to its position, or to 0 when it is there more than once"
+
+	| answer |
+	answer := Dictionary new: names size.
+	names withIndexDo: [ :name :position |
+		answer at: name put: ((answer includesKey: name)
+				 ifTrue: [ 0 ]
+				 ifFalse: [ position ]) ].
+	^ answer
 ]
 
 { #category : 'private - header' }
@@ -946,28 +1015,33 @@ SimdCSVReader class >> checkUnique: names [
 SimdCSVReader class >> namesFrom: cells rename: aBoolean [
 	"The names of a header: an empty cell (nil) is column and its number, made unique, and when asked the duplicates are too"
 
-	| names used |
+	| names used numbers seen |
 	names := cells copy.
-	used := cells reject: [ :each | each isNil ].
-	used := used asSet.
+	used := Set new: cells size.
+	cells do: [ :each | each ifNotNil: [ used add: each ] ].
+	numbers := Dictionary new.
 	names withIndexDo: [ :name :position |
-		name ifNil: [ names at: position put: (used add: (self unique: 'column' , position printString in: used)) ] ].
+		name ifNil: [ names at: position put: (used add: (self unique: 'column' , position printString in: used numbers: numbers)) ] ].
 	aBoolean ifFalse: [ ^ names ].
-	used := names asSet.
+	seen := Set new: cells size.
 	names withIndexDo: [ :name :position |
-		(names indexOf: name) < position ifTrue: [
-			names at: position put: (used add: (self unique: name in: used)) ] ].
+		(seen includes: name)
+			ifTrue: [ names at: position put: (used add: (self unique: name in: used numbers: numbers)) ]
+			ifFalse: [ seen add: name ] ].
 	^ names
 ]
 
 { #category : 'private - header' }
-SimdCSVReader class >> unique: aName in: names [
+SimdCSVReader class >> unique: aName in: names numbers: aDictionary [
+	"aName, or the first of aName_2, aName_3 and so on that is not in names; aDictionary has the last number that was tried for a name"
+
 	| name number |
 	name := aName.
-	number := 1.
+	number := aDictionary at: aName ifAbsent: [ 1 ].
 	[ names includes: name ] whileTrue: [
 		number := number + 1.
 		name := aName , '_' , number printString ].
+	aDictionary at: aName put: number.
 	^ name
 ]
 
@@ -977,18 +1051,26 @@ SimdCSVReader >> namesFrom: cells [
 ]
 
 { #category : 'private - header' }
+SimdCSVReader >> header: names [
+	positions := nil.
+	^ header := names
+]
+
+{ #category : 'private - header' }
 SimdCSVReader >> readHeaderUnique: aBoolean [
 	"aBoolean: the names must be unique, else I do not pass the header"
 
 	| cells names |
 	self configurationChanged.
 	cells := self peekStrings.
-	cells ifNil: [ ^ rawHeader := header := #(  ) ].
+	cells ifNil: [
+		rawHeader := #(  ).
+		^ self header: rawHeader ].
 	names := self namesFrom: cells.
 	aBoolean ifTrue: [ self class checkUnique: names ].
 	self passIndexedRecord.
 	rawHeader := cells.
-	header := names.
+	self header: names.
 	fieldCount := names size.
 	^ names
 ]
@@ -1058,6 +1140,18 @@ SimdCSVReader >> slotAfter: count from: aSlot [
 ]
 
 { #category : 'private - positions' }
+SimdCSVReader >> slotOfRow: count [
+	"The slot where the record begins that follows count rows of those that are built. I go on from the one I was asked last"
+
+	count < placeRow ifTrue: [
+		placeRow := 0.
+		placeSlot := rowSlot ].
+	placeSlot := self slotAfter: count - placeRow from: placeSlot.
+	placeRow := count.
+	^ placeSlot
+]
+
+{ #category : 'private - positions' }
 SimdCSVReader >> startOfSlot: aSlot [
 	"The position in the source of the unit after the end of the field before aSlot"
 
@@ -1099,15 +1193,22 @@ SimdCSVReader >> skipBlanksFrom: position to: limit [
 
 { #category : 'private - positions' }
 SimdCSVReader >> linesFrom: start to: stop [
-	"The number of line ends from start to stop, CRLF being one"
+	"The number of line ends from start to stop, where a record or a blank line ends, CRLF being one. I go on from the one I was asked last"
 
-	| units count |
+	| units count from |
 	units := input source.
 	count := 0.
-	start to: stop do: [ :position |
+	from := start.
+	(linesStart = start and: [ linesStop <= stop ]) ifTrue: [
+		count := linesCount.
+		from := linesStop + 1 ].
+	from to: stop do: [ :position |
 		| unit |
 		unit := units basicAt: position.
 		(unit = 10 or: [ unit = 13 and: [ dialect lineEnd ~~ #lf and: [ position = stop or: [ (units basicAt: position + 1) ~= 10 ] ] ] ]) ifTrue: [ count := count + 1 ] ].
+	linesStart := start.
+	linesStop := stop.
+	linesCount := count.
 	^ count
 ]
 
@@ -1143,12 +1244,14 @@ SimdCSVReader >> openQuotePosition [
 SimdCSVReader >> findUnits [
 	"Is there something to index, or an error in the place of it?"
 
+	linesStart := nil.
 	ended ifTrue: [ ^ false ].
 	started ifFalse: [
 		self start ifFalse: [
 			pendingError := #( #byteOrderMark ).
 			^ true ] ].
 	pendingError ifNotNil: [ ^ true ].
+	input wide: dialect separator asInteger > 255.
 	[ input atEnd ] whileFalse: [
 		(input needsMore and: [ input more not ]) ifTrue: [
 			pendingError := #( #recordBytes ).
@@ -1186,25 +1289,32 @@ SimdCSVReader >> indexMore [
 
 { #category : 'private - indexing' }
 SimdCSVReader >> indexWindow [
-	"Index what the input has; answer whether that gave records or an error"
+	"Index what the input has, or after a change of the dialect a little of it; answer whether that gave records or an error"
 
-	| answer stored status |
-	self prepareIndex.
+	| answer stored status to |
+	[
+	to := input limit.
+	indexGoal ifNotNil: [
+		to := input first + indexGoal - 1 min: to.
+		indexGoal := indexGoal * 2 ].
+	indexFinal := input isFinal and: [ to = input limit ].
+	self prepareIndexFor: to - input first + 1.
 	answer := SimdCSVBackend
 		          index: input source
 		          base: input first
 		          from: input first
-		          to: input limit
-		          dialect: (dialect wordFor: input source final: input isFinal lines: true exact: false)
+		          to: to
+		          dialect: (dialect wordFor: input source final: indexFinal lines: true exact: false)
 		          into: index
 		          from: 1.
 	status := answer first.
 	stored := answer at: 2.
+	to < input limit and: [ stored = 0 and: [ status = SimdCSVBackend statusOK ] ] ] whileTrue.
+	to = input limit ifTrue: [ indexGoal := nil ].
 	base := input first.
-	indexLimit := input limit.
-	indexFinal := input isFinal.
+	indexLimit := to.
 	indexRecords := answer at: 3.
-	input advanceTo: (answer at: 4) complete: status = SimdCSVBackend statusOK.
+	input advanceTo: (answer at: 4) complete: (status = SimdCSVBackend statusOK and: [ to = input limit ]).
 	stored = 0
 		ifTrue: [ lineBase := lineBase + (answer at: 5) ]
 		ifFalse: [
@@ -1231,42 +1341,48 @@ SimdCSVReader >> indexErrorCode: code at: position [
 ]
 
 { #category : 'private - indexing' }
-SimdCSVReader >> prepareIndex [
-	"An index of at most maxFields slots, which is as many as the units can need, or else maxFields"
+SimdCSVReader >> prepareIndexFor: count [
+	"An index of at most maxFields slots, which is as many as count units can need, or else maxFields"
 
 	| needed |
-	needed := input limit - input first + 2 min: maxFields.
+	needed := count + 1 min: maxFields.
 	(index notNil and: [ index size between: needed and: maxFields ]) ifTrue: [ ^ self ].
 	index := WordArray new: ((needed max: 64) * 2 min: maxFields)
 ]
 
 { #category : 'private - indexing' }
 SimdCSVReader >> passQuoteError [
-	"Pass a record of irregular quotes, up to its end as the lenient rules see it"
+	"Pass a record of irregular quotes, up to its end as the lenient rules see it, which is looked for in a window that grows"
 
-	| lenient answer next |
+	| lenient answer next to size |
 	lenient := dialect copy.
 	lenient strictQuoting: false.
-	[ self prepareIndex.
-	  answer := SimdCSVBackend
-		            index: input source
-		            base: input first
-		            from: input first
-		            to: input limit
-		            dialect: (lenient wordFor: input source final: input isFinal lines: false exact: false)
-		            into: index
-		            from: 1.
-	  (answer at: 2) = 0 ] whileTrue: [
-		(answer first = SimdCSVBackend statusMore or: [ input isFinal or: [ input more not ] ]) ifTrue: [ ^ self goToEnd ] ].
+	size := 4096.
+	[
+	to := input first + size - 1 min: input limit.
+	self prepareIndexFor: to - input first + 1.
+	answer := SimdCSVBackend
+		          index: input source
+		          base: input first
+		          from: input first
+		          to: to
+		          dialect: (lenient wordFor: input source final: (input isFinal and: [ to = input limit ]) lines: false exact: false)
+		          into: index
+		          from: 1.
+	(answer at: 2) = 0 ] whileTrue: [
+		answer first = SimdCSVBackend statusMore ifTrue: [ ^ self goToEnd ].
+		(to = input limit and: [ input isFinal or: [ input more not ] ]) ifTrue: [ ^ self goToEnd ].
+		size := size * 2 ].
 	base := input first.
-	indexLimit := input limit.
+	indexLimit := to.
 	indexTo := answer at: 2.
 	next := self positionAfterEnd: base + (index at: (self lastSlotFrom: 1)).
 	next := next min: indexLimit + 1.
+	linesStart := nil.
 	lineBase := lineBase + indexLines + (self linesFrom: base to: next - 1).
 	indexTo := indexLines := 0.
 	slot := 1.
-	pendingError := nil.
+	pendingError := linesStart := nil.
 	recordsDone := recordsDone + rowNext.
 	rowCount := 0.
 	rowNext := 1.
@@ -1317,7 +1433,7 @@ SimdCSVReader >> buildRows [
 	rowCount := 0.
 	rowNext := 1.
 	self plan.
-	(rows isNil or: [ rows size < (indexRecords min: self maxRows) ]) ifTrue: [ rows := Array new: (indexRecords min: self maxRows) ].
+	self prepareRows.
 	answer := SimdCSVBackend
 		          rows: input source
 		          base: base
@@ -1332,7 +1448,8 @@ SimdCSVReader >> buildRows [
 		          from: 1
 		          empty: builderEmpty
 		          budget: self rowBudget.
-	rowSlot := slot.
+	rowSlot := placeSlot := slot.
+	placeRow := 0.
 	slot := answer at: 3.
 	rowCount := answer at: 2.
 	needsWork := alwaysWork or: [ (answer at: 4) > 0 and: [ hasNumbers ] ].
@@ -1355,6 +1472,19 @@ SimdCSVReader >> maxRows [
 	"The most rows of a batch"
 
 	^ 4096
+]
+
+{ #category : 'private - building' }
+SimdCSVReader >> prepareRows [
+	"An Array for the rows of a batch: as many as there are records, at most maxRows; after a change of the configuration a few, and twice as many each time"
+
+	| size |
+	size := indexRecords min: (rowGoal ifNil: [ self maxRows ]).
+	(rows notNil and: [
+		 rowGoal
+			 ifNil: [ rows size >= size ]
+			 ifNotNil: [ rows size = size ] ]) ifFalse: [ rows := Array new: size ].
+	rowGoal ifNotNil: [ rowGoal := rowGoal * 2 < self maxRows ifTrue: [ rowGoal * 2 ] ]
 ]
 
 { #category : 'private - building' }
@@ -1398,7 +1528,7 @@ SimdCSVReader >> planColumns [
 
 	| used byHeader |
 	types := order := rowColumns := width := nil.
-	byHeader := columns isNil and: [ namedColumns or: [ selection notNil or: [ typedColumns notEmpty ] ] ].
+	byHeader := columns isNil and: [ namedColumns or: [ selection notNil or: [ typedColumns notNil ] ] ].
 	byHeader ifTrue: [
 		self planHeaderColumns.
 		^ self ].
@@ -1417,11 +1547,11 @@ SimdCSVReader >> planColumns [
 
 { #category : 'private - building' }
 SimdCSVReader >> planHeaderColumns [
-	| positions used |
+	| places used |
 	objectMode := (recordClass includesBehavior: SequenceableCollection) not.
-	positions := (selection ifNil: [ 1 to: header size ]) asArray.
-	used := positions collect: [ :each |
-		        typedColumns at: each ifAbsent: [
+	places := (selection ifNil: [ 1 to: header size ]) asArray.
+	used := places collect: [ :each |
+		        (typedColumns ifNotNil: [ typedColumns at: each ifAbsent: [ nil ] ]) ifNil: [
 			        (SimdCSVColumn type: #string)
 				        name: (header at: each);
 				        position: each;
@@ -1438,7 +1568,10 @@ SimdCSVReader >> planRowColumns: used fieldCount: count [
 
 	rowColumns := used sorted: [ :a :b | a position <= b position ].
 	rowColumns = used ifFalse: [
-		order := rowColumns collect: [ :each | used identityIndexOf: each ] ].
+		| places |
+		places := IdentityDictionary new: used size.
+		used withIndexDo: [ :each :place | places at: each put: place ].
+		order := rowColumns collect: [ :each | places at: each ] ].
 	plain := rowColumns collect: [ :each | each isPlain ].
 	types := ByteArray new: count.
 	rowColumns do: [ :each | types at: each position put: each code ].
@@ -1523,7 +1656,7 @@ SimdCSVReader >> valueOfInvalid: text in: aColumn [
 	| block error recordSlot start |
 	block := aColumn invalidBlock ifNil: [ invalidBlock ].
 	block ifNotNil: [ ^ block cull: text cull: self recordNumber + 1 cull: aColumn position ].
-	recordSlot := self slotAfter: rowNext - 1 from: rowSlot.
+	recordSlot := self slotOfRow: rowNext - 1.
 	start := self skipBlanksFrom: (self startOfSlot: recordSlot) to: indexLimit.
 	error := SimdCSVConversionError new.
 	error
@@ -1558,6 +1691,7 @@ SimdCSVReader >> signalPending [
 	"Signal the error in the place of the next record"
 
 	| kind |
+	failed := true.
 	kind := pendingError first.
 	kind == #build ifTrue: [ ^ self signalBuildError ].
 	kind == #index ifTrue: [ ^ self signalQuoteError ].

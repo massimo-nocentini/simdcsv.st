@@ -11,6 +11,8 @@ The choice is made once a session (`current`, `backend`, `pluginInfo`); `resetBa
 - NO_ROOM, or a primitive that failed because no object could be allocated: the object memory grows by the need and 1 MiB and the call is made again; then all the garbage is collected and the call is made a last time; then `OutOfMemory`;
 - any other failure signals `SimdCSVArgumentError` with the error code of the primitive.
 
+Where old space cannot grow at will (`isBounded`), a call for rows that fills it ends in OutOfMemory, or in the end of the VM, although a collection would have made room: the VM does not collect before. So I look at the free old space before such a call. When it may be too little, the object memory grows, or else all the garbage is collected; when it is still little the budget of the call is reduced, and when not even the first record fits, of which the plugin tells the size, I signal `OutOfMemory` and nothing is built.
+
 ## Test hooks
 
 `testHook:value:`, where nil removes a hook, and `clearTestHooks`; each forgets the choice:
@@ -25,6 +27,7 @@ Class {
 	#name : 'SimdCSVBackend',
 	#superclass : 'Object',
 	#classVars : [
+		'CollectedFree',
 		'Current',
 		'PluginInfo',
 		'SessionToken',
@@ -53,6 +56,37 @@ SimdCSVBackend class >> batchBytes [
 	^ (self testHook: #batchBytes) ifNil: [ 1048576 ]
 ]
 
+{ #category : 'private' }
+SimdCSVBackend class >> boundOf: anIndex from: start to: stop records: count fieldCount: fieldCount [
+	"At most the bytes of the objects of those entries: for each record an Array, for each field its slot, a header, an overflow header and the rounding or a boxed Float, and 4 bytes a unit"
+
+	| units |
+	units := (anIndex at: stop) - (start = 1
+		          ifTrue: [ 0 ]
+		          ifFalse: [ anIndex at: start - 1 ]) max: 0.
+	^ count * (16 + (8 * (fieldCount max: 1))) + (stop - start + 1 * 32) + (4 * units)
+]
+
+{ #category : 'private' }
+SimdCSVBackend class >> budget: budget first: firstBound all: allBound for: aBlock [
+	"The budget of a call for rows where old space is bounded, so that what it makes fits there: at most the first record, or twice the budget and a record of 64 KiB, or all the records, of which the bounds are given. The object memory grows for it, or all the garbage is collected"
+
+	| free need room |
+	room := 1048576.
+	free := self freeOldSpace.
+	free >= (allBound + room) ifTrue: [ ^ budget ].
+	need := budget < 0
+		        ifTrue: [ allBound ]
+		        ifFalse: [ (budget * 2 + 65536 max: firstBound) min: allBound ].
+	free >= (need + room) ifTrue: [ ^ budget ].
+	(self grow: (need + room - free max: 16777216)) ifTrue: [ ^ budget ].
+	self collectIfUseful: free need: firstBound + room.
+	free := self freeOldSpace.
+	free >= (need + room) ifTrue: [ ^ budget ].
+	(self needOf: aBlock ifNone: firstBound) > (free // 2 max: free - room) ifTrue: [ ^ OutOfMemory signal ].
+	^ budget min: (free // 8 max: 4096)
+]
+
 { #category : 'test hooks' }
 SimdCSVBackend class >> clearTestHooks [
 	"Remove every test hook, and forget the choice of the backend"
@@ -61,12 +95,28 @@ SimdCSVBackend class >> clearTestHooks [
 	SessionToken := nil
 ]
 
+{ #category : 'private' }
+SimdCSVBackend class >> collectIfUseful: free need: byteCount [
+	"Collect all the garbage; not again when there is room for a record, and less than 1 MiB of old space was used since the last time"
+
+	(free >= byteCount and: [ CollectedFree notNil and: [ CollectedFree - free < 1048576 ] ]) ifTrue: [ ^ self ].
+	Smalltalk garbageCollect.
+	CollectedFree := self freeOldSpace
+]
+
 { #category : 'accessing' }
 SimdCSVBackend class >> current [
 	"The object that answers the calls: the test hook #backend, SimdCSVPrimitives with a plugin of my protocol, else SimdCSVSmalltalk"
 
 	SessionToken == Smalltalk session ifFalse: [ self resetBackend ].
 	^ Current
+]
+
+{ #category : 'private' }
+SimdCSVBackend class >> freeOldSpace [
+	"The free bytes of old space"
+
+	^ Smalltalk vm parameterAt: 54
 ]
 
 { #category : 'private' }
@@ -106,11 +156,56 @@ SimdCSVBackend class >> info [
 	^ self pluginInfo
 ]
 
+{ #category : 'testing' }
+SimdCSVBackend class >> isBounded [
+	"Can old space not grow at will, as in WebAssembly, or by the parameter 67 of the VM?"
+
+	| info |
+	info := self pluginInfo.
+	^ (info notNil and: [ info size >= 5 and: [ (info at: 5) = 'emscripten' ] ]) or: [
+		  ((Smalltalk vm parameterAt: 67) ifNil: [ 0 ]) > 0 ]
+]
+
+{ #category : 'private' }
+SimdCSVBackend class >> isIndex: anIndex from: start to: stop [
+	"Are there entries from start to stop? The backend refuses the rest"
+
+	^ (anIndex isMemberOf: WordArray) and: [
+		  start isInteger and: [ stop isInteger and: [ start >= 1 and: [ start <= stop and: [ stop <= anIndex size ] ] ] ] ]
+]
+
+{ #category : 'private' }
+SimdCSVBackend class >> lastSlotIn: source base: base dialect: word index: anIndex from: start to: stop [
+	"The entry that ends the record that begins at start: the first that is at no separator"
+
+	| separator last size position |
+	(base isInteger and: [ word isInteger ]) ifFalse: [ ^ stop ].
+	separator := word bitAnd: 16r1FFFFF.
+	size := source basicSize.
+	last := start.
+	[
+	last < stop and: [
+		position := base + (anIndex at: last).
+		(position between: 1 and: size) and: [ (source basicAt: position) = separator ] ] ] whileTrue: [ last := last + 1 ].
+	^ last
+]
+
 { #category : 'calls' }
 SimdCSVBackend class >> measure: source from: start to: stop dialect: word [
 	"{ status. records. fields. next. lines. code. position }, with a status 0 or 2"
 
 	^ self run: [ :backend | backend measure: source from: start to: stop dialect: word ]
+]
+
+{ #category : 'private' }
+SimdCSVBackend class >> needOf: aBlock ifNone: aNumber [
+	"The bytes of the objects of the first record, which the plugin tells for the budget -2, without making any; or aNumber"
+
+	| answer |
+	self current == SimdCSVPrimitives ifFalse: [ ^ aNumber ].
+	answer := aBlock value: SimdCSVPrimitives value: -2.
+	(answer simdCSVFailed or: [ answer first ~= self statusNoRoom ]) ifTrue: [ ^ 0 ].
+	^ answer last
 ]
 
 { #category : 'accessing' }
@@ -150,6 +245,7 @@ SimdCSVBackend class >> resetBackend [
 
 	| info |
 	SessionToken := Smalltalk session.
+	CollectedFree := nil.
 	info := (self testHook: #pluginMissing) == true ifFalse: [ SimdCSVPrimitives info ].
 	info ifNotNil: [
 		(self testHook: #protocol) ifNotNil: [ :number |
@@ -194,22 +290,33 @@ SimdCSVBackend class >> resolve: anAnswer of: aBlock [
 SimdCSVBackend class >> rows: source base: base to: stop dialect: word index: anIndex from: indexFrom to: indexTo types: types fieldCount: fieldCount into: anArray from: destFrom empty: emptyValue budget: budget [
 	"{ status. rows. nextIndex. odd. code. position. row. field. need }, with a status 0 to 2"
 
-	^ self run: [ :backend |
-		  backend
-			  rows: source
-			  base: base
-			  to: stop
-			  dialect: word
-			  index: anIndex
-			  from: indexFrom
-			  to: indexTo
-			  types: types
-			  fieldCount: fieldCount
-			  into: anArray
-			  from: destFrom
-			  wideStringClass: WideString
-			  empty: emptyValue
-			  budget: budget ]
+	| call bytes |
+	call := [ :backend :budgetBytes |
+	        backend
+		        rows: source
+		        base: base
+		        to: stop
+		        dialect: word
+		        index: anIndex
+		        from: indexFrom
+		        to: indexTo
+		        types: types
+		        fieldCount: fieldCount
+		        into: anArray
+		        from: destFrom
+		        wideStringClass: WideString
+		        empty: emptyValue
+		        budget: budgetBytes ].
+	bytes := budget.
+	(self isBounded and: [ self isIndex: anIndex from: indexFrom to: indexTo ]) ifTrue: [
+		| last |
+		last := self lastSlotIn: source base: base dialect: word index: anIndex from: indexFrom to: indexTo.
+		bytes := self
+			         budget: budget
+			         first: (self boundOf: anIndex from: indexFrom to: last records: 1 fieldCount: fieldCount)
+			         all: (self boundOf: anIndex from: indexFrom to: indexTo records: indexTo - indexFrom + 1 fieldCount: fieldCount)
+			         for: call ].
+	^ self run: [ :backend | call value: backend value: bytes ]
 ]
 
 { #category : 'private' }

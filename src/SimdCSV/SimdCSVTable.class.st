@@ -45,7 +45,10 @@ Class {
 		'columnCount',
 		'recordEnds',
 		'rawNames',
-		'columnNames'
+		'columnNames',
+		'positions',
+		'linePosition',
+		'lineNumber'
 	],
 	#classVars : [
 		'MaxIndexBytes'
@@ -111,6 +114,7 @@ SimdCSVTable >> readUnits: aSource [
 		batch := aSource size + 1 max: 4096 ].
 	input := SimdCSVInput on: aSource encoding: dialect encoding batch: batch max: self class maxInputUnits.
 	isBytes := input isBytes.
+	input wide: dialect separator asInteger > 255.
 	[
 	(input start: dialect encoding) ifFalse: [ ^ self signalByteOrderMark ].
 	input readAll ifFalse: [ self signalTooMany: input limit - input first + 1 ] ] ensure: [ isFile ifTrue: [ input close ] ].
@@ -239,6 +243,7 @@ SimdCSVTable >> columnNames [
 SimdCSVTable >> renameDuplicates [
 	"A name a that comes again is a_2, then a_3"
 
+	positions := nil.
 	columnNames := SimdCSVReader namesFrom: rawNames rename: true
 ]
 
@@ -430,11 +435,13 @@ SimdCSVTable >> columnsOf: someColumns as: someTypes ifInvalid: aBlock [
 SimdCSVTable >> cellsOf: columns empty: empty do: aBlock [
 	"Evaluate aBlock with each column, its number in columns, the number of the row and the value of the cell, which is the mark of an empty cell for a text of nullTexts; empty is what the builder makes of an empty field"
 
-	| types places |
+	| types places place |
 	(self rowCount = 0 or: [ columns isEmpty ]) ifTrue: [ ^ self ].
 	types := ByteArray new: columnCount.
 	columns do: [ :each | types at: each position put: each code ].
-	places := columns collect: [ :each | columns count: [ :other | other position <= each position ] ].
+	places := IdentityDictionary new: columns size.
+	place := 0.
+	(columns asArray sorted: [ :a :b | a position <= b position ]) do: [ :each | places at: each put: (place := place + 1) ].
 	self
 		recordsFrom: 1 + self headerCount
 		to: recordCount
@@ -443,8 +450,8 @@ SimdCSVTable >> cellsOf: columns empty: empty do: aBlock [
 		dialect: dialect
 		do: [ :rows :count :odd :record |
 			columns withIndexDo: [ :column :number |
-				| place row plain |
-				place := places at: number.
+				| row plain |
+				place := places at: column.
 				row := record - self headerCount.
 				plain := column isPlain or: [ odd = 0 and: [ column isNumber ] ].
 				1 to: count do: [ :i |
@@ -495,7 +502,9 @@ SimdCSVTable >> checkRow: anInteger [
 SimdCSVTable >> positionOf: aColumn [
 	"The number of a column, a number or a name"
 
-	aColumn isInteger ifFalse: [ ^ SimdCSVReader positionOf: aColumn in: columnNames ].
+	aColumn isInteger ifFalse: [
+		positions ifNil: [ positions := SimdCSVReader positionsIn: columnNames ].
+		^ SimdCSVReader positionOf: aColumn in: columnNames positions: positions ].
 	(aColumn between: 1 and: columnCount) ifFalse: [ SubscriptOutOfBounds signalFor: aColumn lowerBound: 1 upperBound: columnCount ].
 	^ aColumn
 ]
@@ -580,15 +589,21 @@ SimdCSVTable >> startOfRecord: record [
 
 { #category : 'private - positions' }
 SimdCSVTable >> lineOf: position [
-	"The line of the unit at position, from 1"
+	"The line of the unit at position, where a record begins, from 1. I go on from the one I was asked last"
 
-	| line anyEnd |
+	| line anyEnd from |
 	line := 1.
+	from := base.
+	(linePosition notNil and: [ linePosition <= position ]) ifTrue: [
+		line := lineNumber.
+		from := linePosition ].
 	anyEnd := dialect lineEnd ~~ #lf.
-	base to: position - 1 do: [ :i |
+	from to: position - 1 do: [ :i |
 		| unit |
 		unit := units basicAt: i.
 		(unit = 10 or: [ anyEnd and: [ unit = 13 and: [ (units basicAt: i + 1) ~= 10 ] ] ]) ifTrue: [ line := line + 1 ] ].
+	linePosition := position.
+	lineNumber := line.
 	^ line
 ]
 

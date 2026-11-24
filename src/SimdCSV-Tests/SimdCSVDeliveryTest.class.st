@@ -583,3 +583,273 @@ SimdCSVDeliveryTest >> testErrorOfStreamIsNotTheEnd [
 					 [ [ reader atEnd ] on: Error do: [ :error | error retry ] ] whileFalse: [ out nextPut: reader next ] ])
 			equals: #( #( 'a' 'b' ) #( 'c' 'd' ) #( 'e' 'f' ) ) ]
 ]
+
+{ #category : 'tests' }
+SimdCSVDeliveryTest >> testSkipFailedRecordWithoutError [
+	"An error that was not signalled is not passed unseen: that of another record is in the handler"
+
+	self batchSizes do: [ :size |
+		| reader seen |
+		seen := OrderedCollection new.
+		reader := self reader: (self lines: #( '1,2' '3,4' '5' '6,7' )).
+		reader
+			batchBytes: size;
+			beStrict.
+		[
+		reader do: [ :row |
+			seen add: row first.
+			row first = '3' ifTrue: [ self error: 'of the application' ] ] ]
+			on: Error
+			do: [ :error |
+				seen add: error class.
+				reader skipFailedRecord.
+				error retry ].
+		self assert: seen asArray equals: { '1'. '3'. Error. SimdCSVFieldCountMismatch. '6' } ]
+]
+
+{ #category : 'tests' }
+SimdCSVDeliveryTest >> testSkipFailedRecordAfterAnotherConfiguration [
+	"The error that was signalled is gone: nothing is passed"
+
+	| reader |
+	reader := self reader: (self lines: #( 'a' 'x' '2' '3' '4' )).
+	reader
+		readHeader;
+		column: #a as: #integer.
+	self assert: [ reader next ] signals: SimdCSVConversionError.
+	reader column: #a as: #string.
+	self assert: reader next equals: #( 'x' ).
+	reader skipFailedRecord.
+	self assert: reader next equals: #( '2' ).
+	"and so after the record of the error was read otherwise"
+	reader := self reader: (self lines: #( 'x' '2' '3' )).
+	reader addIntegerField.
+	self assert: [ reader next ] signals: SimdCSVConversionError.
+	self assert: ([ reader next ]
+			 on: SimdCSVConversionError
+			 do: [ :error | error resume: 7 ])
+		equals: #( 7 ).
+	reader skipFailedRecord.
+	self assert: reader next equals: #( 2 )
+]
+
+{ #category : 'tests' }
+SimdCSVDeliveryTest >> testSkipFailedRecordOfAQuoteError [
+	"The error stands also after a configuration that does not touch it"
+
+	| reader |
+	reader := self reader: (self lines: #( '1' '2"' '3' )).
+	reader beStrictQuoting.
+	self assert: reader next equals: #( '1' ).
+	self assert: [ reader next ] signals: SimdCSVQuoteError.
+	reader emptyFieldValue: ''.
+	reader skipFailedRecord.
+	self assert: reader next equals: #( '3' )
+]
+
+{ #category : 'tests' }
+SimdCSVDeliveryTest >> testManyErrors [
+	"The cost of an error does not grow with its place in the batch. (It was 20 seconds for each of these.)"
+
+	| count bad start |
+	count := self largeSize: 20000.
+	bad := self lines: ((1 to: count) collect: [ :i | 'n/a,abcdefgh' ]).
+	start := Time millisecondClockValue.
+	{ [ :reader |
+	  reader
+		  addIntegerField;
+		  addField ].
+	[ :reader |
+	reader
+		fieldCount: 3;
+		beStrict ] } do: [ :configuration |
+		| reader errors lines |
+		errors := 0.
+		lines := 0.
+		reader := self reader: bad asByteArray.
+		configuration value: reader.
+		[ reader do: [ :row |  ] ]
+			on: SimdCSVParseError
+			do: [ :error |
+				errors := errors + 1.
+				lines := lines + error line.
+				reader skipFailedRecord.
+				error retry ].
+		self assert: errors equals: count.
+		self assert: lines equals: count * (count + 1) / 2 ].
+	self assert: (Time millisecondsSince: start) < 20000
+]
+
+{ #category : 'tests' }
+SimdCSVDeliveryTest >> testManyResumedErrors [
+	| count bad reader lines rows |
+	count := self largeSize: 20000.
+	bad := self lines: ((1 to: count) collect: [ :i |
+			        i \\ 2 = 0
+				        ifTrue: [ '"n' , String crlf , 'a",abcdefgh' ]
+				        ifFalse: [ 'n/a,abcdefgh' ] ]).
+	reader := self reader: bad asByteArray.
+	reader
+		addIntegerField;
+		addField.
+	lines := 0.
+	rows := nil.
+	self
+		should: [
+			rows := [ reader upToEnd ]
+				        on: SimdCSVConversionError
+				        do: [ :error |
+					        lines := lines + error line.
+					        error resume: 0 ] ]
+		notTakeMoreThan: 20 seconds.
+	self assert: rows size equals: count.
+	self assert: (rows allSatisfy: [ :row | row first = 0 ]).
+	"1, 2, 4, 5, 7 ..."
+	self assert: lines equals: (1 to: count) sum + ((1 to: count) sum: [ :i | i - 1 // 2 ])
+]
+
+{ #category : 'tests' }
+SimdCSVDeliveryTest >> testManyQuoteErrors [
+	"A record of irregular quotes is looked for in a small window, not in the batch"
+
+	#( '1,2"2,x' '"1,2"2' ) do: [ :line |
+		| count text counting reader errors |
+		count := self largeSize: 2000.
+		text := (self lines: ((1 to: count) collect: [ :i | line ])) asByteArray.
+		counting := SimdCSVTestCountingBackend on: self backendObject.
+		SimdCSVBackend testHook: #backend value: counting.
+		reader := self reader: text.
+		reader beStrictQuoting.
+		errors := 0.
+		[ reader atEnd ] whileFalse: [
+			[ reader next ]
+				on: SimdCSVQuoteError
+				do: [ :error |
+					errors := errors + 1.
+					self assert: error line equals: errors.
+					reader skipFailedRecord ] ].
+		self assert: errors equals: count.
+		self assert: counting indexCalls <= (2 * count + 2).
+		"each time the whole of the rest, which ends at the error, and 4 KiB"
+		self assert: counting units <= (count * (text size // 2 + 4096) + (2 * text size)) ]
+]
+
+{ #category : 'tests' }
+SimdCSVDeliveryTest >> testLongQuoteError [
+	"The record of irregular quotes is longer than the window, and than a batch"
+
+	#( 1 100 5000 1048576 ) do: [ :size |
+		| reader |
+		reader := self reader: 'a"b' , (String new: 20000 withAll: $x) , ',' , String lf , 'c' , String lf , 'd"' , (String new: 9000 withAll: $,).
+		reader
+			batchBytes: size;
+			beStrictQuoting.
+		self assert: [ reader next ] signals: SimdCSVQuoteError.
+		reader skipFailedRecord.
+		self assert: reader next equals: #( 'c' ).
+		self assert: (self assert: [ reader next ] signals: SimdCSVQuoteError) line equals: 3.
+		reader skipFailedRecord.
+		self assert: reader atEnd ]
+]
+
+{ #category : 'tests' }
+SimdCSVDeliveryTest >> testSkipBuildsNothing [
+	"Neither skip nor atEnd builds rows, which with beStrict were built again after each"
+
+	| counting reader |
+	counting := SimdCSVTestCountingBackend on: self backendObject.
+	SimdCSVBackend testHook: #backend value: counting.
+	reader := self reader: (self lines: ((1 to: 5000) collect: [ :i | i printString , ',b' ])).
+	reader
+		beStrict;
+		skip: 2000.
+	1000 timesRepeat: [
+		self deny: reader atEnd.
+		reader skip ].
+	self assert: counting rowCalls equals: 0.
+	self assert: reader next equals: #( '3001' 'b' ).
+	self assert: reader recordNumber equals: 3001.
+	reader skip: 1998.
+	self assert: reader next equals: #( '5000' 'b' ).
+	reader skip: 3.
+	self assert: reader atEnd.
+	self assert: reader recordNumber equals: 5000
+]
+
+{ #category : 'tests' }
+SimdCSVDeliveryTest >> testConfigurationBeforeEachRecord [
+	"Few rows are built again, and a little is indexed again, after a change; nothing when the value is the same"
+
+	| count text expected counting rows reader |
+	count := self largeSize: 5000.
+	text := self lines: ((1 to: count) collect: [ :i | i printString , ',' ]).
+	counting := SimdCSVTestCountingBackend on: self backendObject.
+	SimdCSVBackend testHook: #backend value: counting.
+	reader := self reader: text.
+	rows := OrderedCollection new.
+	[ reader atEnd ] whileFalse: [
+		rows add: (reader
+				 emptyFieldValue: reader recordNumber printString;
+				 next) ].
+	expected := (1 to: count) asArray collect: [ :i |
+		            {
+			            i printString.
+			            (i - 1) printString } ].
+	self assert: rows asArray equals: expected.
+	self assert: counting rowsBuilt <= (20 * count + 4096).
+	counting := SimdCSVTestCountingBackend on: self backendObject.
+	SimdCSVBackend testHook: #backend value: counting.
+	reader := self reader: text.
+	rows := OrderedCollection new.
+	[ reader atEnd ] whileFalse: [
+		rows add: (reader
+				 separator: (reader recordNumber even
+						  ifTrue: [ $; ]
+						  ifFalse: [ $, ]);
+				 next) ].
+	self assert: rows asArray equals: ((1 to: count) asArray collect: [ :i |
+			 i odd
+				 ifTrue: [ { (i printString , ',') } ]
+				 ifFalse: [
+					 {
+						 i printString.
+						 nil } ] ]).
+	self assert: counting units <= (4096 * count + (2 * text size)).
+	self assert: counting rowsBuilt <= (20 * count + 4096).
+	counting := SimdCSVTestCountingBackend on: self backendObject.
+	SimdCSVBackend testHook: #backend value: counting.
+	reader := self reader: text.
+	[ reader atEnd ] whileFalse: [
+		reader
+			emptyFieldValue: nil;
+			separator: $,;
+			quote: $";
+			fieldCount: nil;
+			recordClass: Array;
+			recordClassIsIndexable: true;
+			ifInvalid: nil;
+			next ].
+	self assert: counting units equals: text size.
+	self assert: counting rowsBuilt equals: count
+]
+
+{ #category : 'tests' }
+SimdCSVDeliveryTest >> testMaxFieldsRaised [
+	"A limit that was passed is raised: the record is read"
+
+	self batchSizes do: [ :size |
+		| reader |
+		reader := self reader: 'a' , String lf , (String new: 2000 withAll: $,) , String lf , 'b'.
+		reader
+			batchBytes: size;
+			maxFields: 1024.
+		self assert: reader next equals: #( 'a' ).
+		self assert: [ reader next ] signals: SimdCSVResourceError.
+		reader maxFields: 1500.
+		self assert: (self assert: [ reader next ] signals: SimdCSVResourceError) limit equals: 1500.
+		reader maxFields: 4096.
+		reader skipFailedRecord.
+		self assert: reader next size equals: 2001.
+		self assert: reader next equals: #( 'b' ).
+		self assert: reader next isNil ]
+]

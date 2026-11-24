@@ -196,3 +196,52 @@ SimdCSVNeoTest >> testSelectors [
 	unsupported do: [ :each | self assert: (own includes: each) description: each ].
 	NeoCSVReader class localSelectors do: [ :each | self assert: (SimdCSVReader class includesSelector: each) description: each ]
 ]
+
+{ #category : 'tests' }
+SimdCSVNeoTest >> testWriterSelectors [
+	"Each selector of NeoCSVWriter is implemented, or listed as not provided"
+
+	| own unsupported |
+	own := (NeoCSVWriter localMethods reject: [ :each | each isExtension ]) collect: [ :each | each selector ].
+	unsupported := SimdCSVWriter unsupportedNeoSelectors.
+	own do: [ :each |
+		self
+			assert: ((SimdCSVWriter includesSelector: each) xor: (unsupported includes: each))
+			description: each ].
+	unsupported do: [ :each | self assert: (own includes: each) description: each ].
+	NeoCSVWriter class localSelectors do: [ :each | self assert: (SimdCSVWriter class includesSelector: each) description: each ]
+]
+
+{ #category : 'tests' }
+SimdCSVNeoTest >> testFieldWriters [
+	"The writers of a field write the same"
+
+	| write |
+	write := [ :class |
+	         String streamContents: [ :out |
+		         (class on: out)
+			         lineEndConvention: #lf;
+			         addQuotedField: #first;
+			         addQuotedFields: { #second. #third };
+			         addOptionalQuotedField: #first;
+			         addOptionalQuotedFields: { #second. #third };
+			         addRawField: #third;
+			         addRawFields: { #third };
+			         addObjectField: #third;
+			         addObjectFields: { #third };
+			         addQuotedFieldAt: 1;
+			         addQuotedFieldsAt: #( 2 3 );
+			         addOptionalQuotedFieldAt: 1;
+			         addOptionalQuotedFieldsAt: #( 2 3 );
+			         addRawFieldAt: 3;
+			         addRawFieldsAt: #( 3 );
+			         addObjectFieldAt: 3;
+			         addObjectFieldsAt: #( 3 );
+			         nextPutAll: {
+				         #( 'a,b' 'c "d"' 1 ).
+				         {
+					         'e'.
+					         ('f' , String lf , 'g').
+					         22 } } ] ].
+	self assert: (write value: SimdCSVWriter) equals: (write value: NeoCSVWriter)
+]

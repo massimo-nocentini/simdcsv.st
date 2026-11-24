@@ -50,7 +50,17 @@ SimdCSVColumn class >> maxCachedTexts [
 
 { #category : 'private' }
 SimdCSVColumn class >> typeCodes [
-	^ { (#string -> 1). (#integer -> 2). (#float -> 3). (#floatComma -> 4). (#symbol -> 1). (#boolean -> 1). (#ignored -> 0) } asDictionary
+	^ #( #string 1 #integer 2 #float 3 #floatComma 4 #symbol 1 #boolean 1 #ignored 0 )
+]
+
+{ #category : 'private' }
+SimdCSVColumn class >> codeOf: aSymbol [
+	"The type code of primitiveRows, nil when aSymbol is no type"
+
+	| codes |
+	codes := self typeCodes.
+	1 to: codes size by: 2 do: [ :i | (codes at: i) == aSymbol ifTrue: [ ^ codes at: i + 1 ] ].
+	^ nil
 ]
 
 { #category : 'initialization' }
@@ -66,8 +76,7 @@ SimdCSVColumn >> type [
 
 { #category : 'accessing' }
 SimdCSVColumn >> type: aSymbol [
-	(self class typeCodes includesKey: aSymbol) ifFalse: [
-		^ SimdCSVArgumentError signal: 'Not a type of a column: ' , aSymbol printString ].
+	(self class codeOf: aSymbol) ifNil: [ ^ SimdCSVArgumentError signal: 'Not a type of a column: ' , aSymbol printString ].
 	type := aSymbol.
 	converter := cache := nil
 ]
@@ -83,7 +92,7 @@ SimdCSVColumn >> converter: aBlockOrNil cached: aBoolean [
 SimdCSVColumn >> code [
 	"The type code of primitiveRows"
 
-	^ self class typeCodes at: type
+	^ self class codeOf: type
 ]
 
 { #category : 'accessing' }

@@ -625,3 +625,65 @@ SimdCSVReaderTest >> testBackendQuestions [
 	self assert: SimdCSV pluginInfo equals: SimdCSVBackend pluginInfo.
 	self assert: SimdCSV implementationName equals: SimdCSVBackend implementationName
 ]
+
+{ #category : 'tests' }
+SimdCSVReaderTest >> testManyColumns [
+	"The configuration of many columns takes a time in proportion to them. (With 20,000 the slowest of these took minutes.)"
+
+	| count names text rows reader same table |
+	count := self largeSize: 20000.
+	names := (1 to: count) asArray collect: [ :i | 'col' , i printString ].
+	text := String streamContents: [ :out |
+		        names
+			        do: [ :each | out nextPutAll: each ]
+			        separatedBy: [ out nextPut: $, ].
+		        out lf.
+		        (1 to: count)
+			        do: [ :each | out print: each ]
+			        separatedBy: [ out nextPut: $, ] ].
+	same := (String new: count * 2 - 1) collect: [ :each | $, ].
+	1 to: same size by: 2 do: [ :i | same at: i put: $x ].
+	self
+		should: [
+			reader := self reader: text.
+			reader
+				addPlainFields: count;
+				skip.
+			rows := reader upToEnd.
+			self assert: rows first last equals: count printString.
+			reader := self reader: text.
+			reader
+				readHeader;
+				selectColumns: names reversed.
+			names do: [ :each | reader column: each as: #integer ].
+			self assert: reader next equals: (1 to: count) asArray reversed.
+			reader := self reader: text.
+			reader
+				readHeader;
+				selectColumns: { names first }.
+			names do: [ :each | reader column: each as: #integer ].
+			self assert: reader next equals: (1 to: count) asArray.
+			reader := self reader: same.
+			reader renameDuplicates.
+			reader readHeader.
+			self assert: reader header first equals: 'x'.
+			self assert: reader header last equals: 'x_' , count printString.
+			self assert: reader header asSet size equals: count.
+			reader := self reader: (String new: count - 1 withAll: $,).
+			self assert: reader readHeader last equals: 'column' , count printString.
+			table := SimdCSV tableFrom: text.
+			self assert: (table columns: names reversed as: (Array new: count withAll: #integer)) first equals: { count } ]
+		notTakeMoreThan: 60 seconds
+]
+
+{ #category : 'tests' }
+SimdCSVReaderTest >> testUniqueNames [
+	"The names that are made are in no other place of the header, before or after"
+
+	| reader |
+	reader := self reader: 'a,a,a_2,a,,column5,a_3,'.
+	reader
+		renameDuplicates;
+		readHeader.
+	self assert: reader header equals: #( 'a' 'a_4' 'a_2' 'a_5' 'column5_2' 'column5' 'a_3' 'column8' )
+]

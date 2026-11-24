@@ -27,7 +27,8 @@ Class {
 		'origin',
 		'batchUnits',
 		'maxUnits',
-		'stream'
+		'stream',
+		'wide'
 	],
 	#category : 'SimdCSV-Reading',
 	#package : 'SimdCSV',
@@ -46,7 +47,9 @@ SimdCSVInput class >> on: aSource encoding: aSymbol batch: batchUnits max: maxUn
 
 { #category : 'private' }
 SimdCSVInput class >> inputOn: aSource encoding: aSymbol [
-	(aSource isKindOf: AbstractFileReference) ifTrue: [ ^ SimdCSVStreamInput onFile: aSource ].
+	(aSource isKindOf: AbstractFileReference) ifTrue: [
+		aSource isDirectory ifTrue: [ ^ SimdCSVArgumentError signal: 'A directory is no source of CSV: ' , aSource printString ].
+		^ SimdCSVStreamInput onFile: aSource ].
 	(self isUnits: aSource) ifTrue: [ ^ SimdCSVCollectionInput on: aSource from: 1 to: aSource size ].
 	(aSource respondsTo: #next:) ifFalse: [
 		^ SimdCSVArgumentError signal: 'A source of CSV is a String, a ByteArray, a FileReference or a stream, not ' , aSource class name ].
@@ -82,6 +85,16 @@ SimdCSVInput class >> isUnits: anObject [
 	"Can the backends read anObject as it is (Symbols after asString)?"
 
 	^ anObject isString or: [ anObject isMemberOf: ByteArray ]
+]
+
+{ #category : 'private' }
+SimdCSVInput class >> wideCopyOf: aString to: limit [
+	"A WideString of the size of aString with its characters up to limit"
+
+	| answer |
+	answer := WideString new: aString size.
+	limit > 0 ifTrue: [ answer replaceFrom: 1 to: limit with: aString startingAt: 1 ].
+	^ answer
 ]
 
 { #category : 'accessing' }
@@ -123,6 +136,15 @@ SimdCSVInput >> batchUnits: batch maxUnits: max [
 
 	maxUnits := max + 2.
 	batchUnits := batch min: maxUnits
+]
+
+{ #category : 'accessing' }
+SimdCSVInput >> wide: aBoolean [
+	"aBoolean: the separator is beyond U+00FF, which no unit of a ByteString can be: characters are then in a WideString"
+
+	wide := aBoolean.
+	(aBoolean and: [ source isString and: [ source isWideString not ] ]) ifTrue: [
+		source := self class wideCopyOf: source to: source size ]
 ]
 
 { #category : 'testing' }
@@ -172,7 +194,7 @@ SimdCSVInput >> more [
 SimdCSVInput >> start: anEncoding [
 	"Pass the byte order mark; answer false when it is one of UTF-16"
 
-	[ limit - first < 2 and: [ self isFinal not ] ] whileTrue: [ self more ].
+	[ self mayBeginMark: anEncoding ] whileTrue: [ self more ].
 	self hasUnits ifFalse: [ ^ true ].
 	self isBytes ifFalse: [
 		(source basicAt: first) = 16rFEFF ifTrue: [ first := first + 1 ].
@@ -180,6 +202,20 @@ SimdCSVInput >> start: anEncoding [
 	anEncoding == #utf8 ifFalse: [ ^ true ].
 	(self startsWith: #[ 239 187 191 ]) ifTrue: [ first := first + 3 ].
 	^ ((self startsWith: #[ 255 254 ]) or: [ self startsWith: #[ 254 255 ] ]) not
+]
+
+{ #category : 'private' }
+SimdCSVInput >> mayBeginMark: anEncoding [
+	"Must more units be read to know whether there is a byte order mark? A stream that is slow is not asked for three when the first is no part of a mark"
+
+	| unit count |
+	self isFinal ifTrue: [ ^ false ].
+	self hasUnits ifFalse: [ ^ true ].
+	(self isBytes and: [ anEncoding == #utf8 ]) ifFalse: [ ^ false ].
+	unit := source basicAt: first.
+	count := limit - first + 1.
+	unit = 239 ifTrue: [ ^ count < 2 or: [ count < 3 and: [ (source basicAt: first + 1) = 187 ] ] ].
+	^ count < 2 and: [ unit = 254 or: [ unit = 255 ] ]
 ]
 
 { #category : 'private' }

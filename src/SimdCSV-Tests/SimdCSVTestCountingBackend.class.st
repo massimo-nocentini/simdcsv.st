@@ -1,5 +1,5 @@
 "
-I am a backend that passes its calls on to another one, and counts the calls and the units that were indexed.
+I am a backend that passes its calls on to another one, and counts the calls, the units that were indexed and the rows that were built.
 "
 Class {
 	#name : 'SimdCSVTestCountingBackend',
@@ -8,7 +8,8 @@ Class {
 		'backend',
 		'units',
 		'indexCalls',
-		'rowCalls'
+		'rowCalls',
+		'rowsBuilt'
 	],
 	#category : 'SimdCSV-Tests-Support',
 	#package : 'SimdCSV-Tests',
@@ -23,7 +24,7 @@ SimdCSVTestCountingBackend class >> on: aBackend [
 { #category : 'initialization' }
 SimdCSVTestCountingBackend >> setBackend: aBackend [
 	backend := aBackend.
-	units := indexCalls := rowCalls := 0
+	units := indexCalls := rowCalls := rowsBuilt := 0
 ]
 
 { #category : 'accessing' }
@@ -34,6 +35,11 @@ SimdCSVTestCountingBackend >> indexCalls [
 { #category : 'accessing' }
 SimdCSVTestCountingBackend >> rowCalls [
 	^ rowCalls
+]
+
+{ #category : 'accessing' }
+SimdCSVTestCountingBackend >> rowsBuilt [
+	^ rowsBuilt
 ]
 
 { #category : 'accessing' }
@@ -56,8 +62,9 @@ SimdCSVTestCountingBackend >> measure: source from: start to: stop dialect: word
 
 { #category : 'calls' }
 SimdCSVTestCountingBackend >> rows: source base: base to: stop dialect: word index: anIndex from: indexFrom to: indexTo types: types fieldCount: fieldCount into: anArray from: destFrom wideStringClass: wideClass empty: emptyValue budget: budget [
+	| answer |
 	rowCalls := rowCalls + 1.
-	^ backend
+	answer := backend
 		  rows: source
 		  base: base
 		  to: stop
@@ -71,5 +78,7 @@ SimdCSVTestCountingBackend >> rows: source base: base to: stop dialect: word ind
 		  from: destFrom
 		  wideStringClass: wideClass
 		  empty: emptyValue
-		  budget: budget
+		  budget: budget.
+	rowsBuilt := rowsBuilt + (answer at: 2).
+	^ answer
 ]
