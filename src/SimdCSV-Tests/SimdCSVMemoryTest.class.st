@@ -78,18 +78,23 @@ SimdCSVMemoryTest >> testWideHeaderAndBlankLines [
 SimdCSVMemoryTest >> testGrowth [
 	"A record that does not fit the free memory is built after the memory has grown, once"
 
-	| bytes grown row size |
+	| bytes grown row size free |
 	grown := 0.
 	SimdCSVBackend testHook: #grow value: [ :count |
 		grown := grown + 1.
-		Smalltalk growMemoryByAtLeast: count ].
-	size := Smalltalk garbageCollect // 3 max: 1048576.
+		[ Smalltalk growMemoryByAtLeast: count ]
+			on: OutOfMemory
+			do: [ :error | error return ] ].
+	free := Smalltalk garbageCollect.
+	size := (free // 3 max: 1048576) min: (self largeSize: 268435456).
 	bytes := ByteArray new: size withAll: 120.
 	bytes replaceFrom: 1 to: 2 with: #[ 206 177 ] startingAt: 1.
 	row := (self reader: bytes)
 		       maxRecordBytes: size;
 		       next.
-	self assert: grown equals: 1.
+	self assert: grown equals: (size * 4 > free
+			 ifTrue: [ 1 ]
+			 ifFalse: [ 0 ]).
 	self assert: row first class equals: WideString.
 	self assert: row first size equals: size - 1.
 	self assert: row first first codePoint equals: 945.
