@@ -377,6 +377,10 @@ SimdCSVRowsTest >> testInvalidUTF8AfterEscapedQuotes [
 	self
 		assert: (self rows: '"a"b' asByteArray , #[ 16r80 ] flags: 0 types: nil fieldCount: 0) first
 		equals: #( 2 0 1 0 4 5 1 1 0 ).
+	"a quote that the text does not have does not join a sequence"
+	self
+		assert: (self rows: #[ 34 16rC3 34 16rA9 ] flags: 0 types: nil fieldCount: 0) first
+		equals: #( 2 0 1 0 4 2 1 1 0 ).
 	self
 		assert: (self rows: '1,x' asByteArray , #[ 16rFF ] flags: 0 types: #[ 2 2 ] fieldCount: 0) first
 		equals: #( 2 0 1 0 4 4 1 2 0 )

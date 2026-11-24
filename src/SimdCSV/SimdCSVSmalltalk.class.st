@@ -783,15 +783,14 @@ SimdCSVSmalltalk >> spansTooMuch [
 
 { #category : 'text' }
 SimdCSVSmalltalk >> stringFrom: start to: stop [
-	"The narrowest String of the text of the field of the units start to stop, that findTextFrom:to: found, or nil with position when it is not UTF-8"
+	"The narrowest String of the text of the field of the units start to stop, that findTextFrom:to: found, or nil with position when it is not UTF-8.  The units are decoded with their quotes first, so that no quote joins the halves of a sequence"
 
-	| buffer count string |
+	| buffer count |
 	isPlain ifTrue: [ ^ self stringOf: source from: textStart to: textEnd ].
+	(self stringOf: source from: textStart to: textEnd) ifNil: [ ^ nil ].
 	buffer := WordArray new: stop - start.
 	count := self unescapeInto: buffer.
-	string := self stringOf: buffer from: 1 to: count.
-	string ifNil: [ position := self unescapeInto: (WordArray new: position) ].
-	^ string
+	^ self stringOf: buffer from: 1 to: count
 ]
 
 { #category : 'text' }
@@ -841,7 +840,7 @@ SimdCSVSmalltalk >> types: aByteArrayOrNil fieldCount: anInteger wideStringClass
 
 { #category : 'text' }
 SimdCSVSmalltalk >> unescapeInto: buffer [
-	"Store the units of the text of a quoted field, textStart to textEnd, into buffer, two quotes as one and the lone closing quote left out; answer their count, or, once buffer is full, the position in the source of the last one"
+	"Store the units of the text of a quoted field, textStart to textEnd, into buffer, two quotes as one and the lone closing quote left out; answer their count"
 
 	| p count unit isOpen |
 	p := textStart.
@@ -858,8 +857,7 @@ SimdCSVSmalltalk >> unescapeInto: buffer [
 			ifTrue: [ isOpen := false ]
 			ifFalse: [
 				count := count + 1.
-				buffer at: count put: unit.
-				count = buffer size ifTrue: [ ^ p ] ].
+				buffer at: count put: unit ].
 		p := p + 1 ].
 	^ count
 ]
