@@ -47,33 +47,51 @@ SimdCSVMemoryTest >> testManyCommas [
 	self assert: (self assert: [ self read: commas ] signals: SimdCSVResourceError) kind equals: #fields
 ]
 
+{ #category : 'helpers' }
+SimdCSVMemoryTest >> liveBytes [
+	"The bytes of the objects that are left after a full garbage collection"
+
+	| free |
+	free := Smalltalk garbageCollect.
+	^ (Smalltalk vm parameterAt: 1) - free
+]
+
 { #category : 'tests' }
 SimdCSVMemoryTest >> testWideHeaderAndBlankLines [
-	"A header of many names pads each blank line to as many fields, some rows at a time"
+	"A header of many names pads each blank line to as many fields: no more than a batch of the rows is alive"
 
-	| text count reader free lowest |
+	| text count reader before most |
 	text := (String new: 65535 withAll: $,) , (String new: (self largeSize: 1000) withAll: Character lf).
 	reader := self reader: text.
 	self assert: reader readHeader size equals: 65536.
-	count := 0.
-	Smalltalk garbageCollect.
-	free := lowest := Smalltalk vm parameterAt: 1.
+	count := most := 0.
+	before := self liveBytes.
 	reader do: [ :row |
 		count := count + 1.
 		self assert: row size equals: 65536.
-		lowest := lowest max: (Smalltalk vm parameterAt: 1) ].
+		count \\ 50 = 0 ifTrue: [ most := most max: self liveBytes - before ] ].
 	self assert: count equals: (self largeSize: 1000) - 1.
-	self assert: lowest - free < (256 * 1048576)
+	self assert: most < (16 * 1048576) description: [ most printString ]
 ]
 
 { #category : 'tests' }
 SimdCSVMemoryTest >> testGrowth [
-	"Records that do not fit the free memory are built after it has grown"
+	"A record that does not fit the free memory is built after the memory has grown, once"
 
-	| text row size |
-	size := self largeSize: 20000000.
-	text := (String new: size withAll: $x) , ',' , (String new: size withAll: $y).
-	row := (self reader: text) next.
-	self assert: (row collect: [ :each | each size ]) equals: { size. size }.
-	self assert: row second last equals: $y
+	| bytes grown row size |
+	grown := 0.
+	SimdCSVBackend testHook: #grow value: [ :count |
+		grown := grown + 1.
+		Smalltalk growMemoryByAtLeast: count ].
+	size := Smalltalk garbageCollect // 3 max: 1048576.
+	bytes := ByteArray new: size withAll: 120.
+	bytes replaceFrom: 1 to: 2 with: #[ 206 177 ] startingAt: 1.
+	row := (self reader: bytes)
+		       maxRecordBytes: size;
+		       next.
+	self assert: grown equals: 1.
+	self assert: row first class equals: WideString.
+	self assert: row first size equals: size - 1.
+	self assert: row first first codePoint equals: 945.
+	self assert: row first last equals: $x
 ]
