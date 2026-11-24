@@ -9,11 +9,11 @@ I am the input of a `SimdCSVReader`: units (bytes, or characters) in the collect
 
 | source | read as |
 |---|---|
-| `ByteArray`, `String` | in place |
-| `Symbol` | in place, as a String |
-| `FileReference` | a binary stream, closed at its end |
-| `ReadStream` on a `ByteArray` or a `String` | in place, from its position |
-| `ZnCharacterReadStream` that decodes UTF-8 and has not been peeked | the bytes of its wrapped stream |
+| ByteArray or String | in place |
+| Symbol | in place, as a String |
+| FileReference | a binary stream, closed at its end |
+| ReadStream on a ByteArray or a String | in place, from its position |
+| ZnCharacterReadStream that decodes UTF-8 and has not been peeked | the bytes of its wrapped stream |
 | another binary stream | bytes |
 | another stream | characters |
 "

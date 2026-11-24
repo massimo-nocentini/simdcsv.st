@@ -37,7 +37,7 @@ SimdCSVCollectionInput >> isFinal [
 
 { #category : 'testing' }
 SimdCSVCollectionInput >> needsMore [
-	^ stalled and: [ limit < end ]
+	^ limit < end and: [ stalled or: [ first > limit ] ]
 ]
 
 { #category : 'reading' }

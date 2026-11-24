@@ -17,12 +17,12 @@ I have the protocol of `NeoCSVWriter`. Without fields declared, a record is what
 
 | object | text |
 |---|---|
-| `emptyFieldValue` (nil) | none: an unquoted empty field |
+| emptyFieldValue (nil) | none: an unquoted empty field |
 | String, Symbol | itself |
-| Float | its shortest decimal text; `nan`, `inf`, `-inf` |
-| Fraction | that of `asFloat` |
+| Float | its shortest decimal text; nan, inf or -inf |
+| Fraction | that of its nearest Float |
 | ScaledDecimal | its decimal digits |
-| another object | `asString` |
+| another object | what asString answers |
 
 - `fieldWriter: #quoted` (the default) puts quotes around each text; an empty String is an empty quoted field.
 - `#optionalQuoted` does so only where it is needed: for a separator, a quote or a line end in the text, for an empty String, and for a first field of the output that begins with U+FEFF, which would be a byte order mark.

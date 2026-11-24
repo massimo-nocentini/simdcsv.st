@@ -5,10 +5,10 @@ I am a column of a `SimdCSVReader` or a `SimdCSVTable`: the type of its cells, h
 |---|---|---|
 | `#string` | 1 | the String |
 | `#integer` | 2 | an Integer |
-| `#float` | 3 | a Float; also of `nan`, `inf`, `infinity` in any case, with a sign |
+| `#float` | 3 | a Float; also of nan, inf and infinity in any case, the infinities with a sign |
 | `#floatComma` | 4 | a Float written with a decimal comma |
 | `#symbol` | 1 | the text as a Symbol |
-| `#boolean` | 1 | true or false, of `true` and `false` in any case |
+| `#boolean` | 1 | true or false, of these words in any case |
 | `#ignored` | 0 | none, the column is not in the rows |
 
 A column with a converter block is a `#string` column whose value is the value of the block. With `cached:` the block is asked once for each text, up to 10,000 texts: for columns with few different texts, such as dates, times and codes.
