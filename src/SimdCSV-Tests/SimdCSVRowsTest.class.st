@@ -624,3 +624,30 @@ SimdCSVRowsTest >> testWideStringClass [
 		budget: -1.
 	self assert: dest first first equals: (WordArray with: 16r20AC)
 ]
+
+{ #category : 'tests' }
+SimdCSVRowsTest >> testUTF8IsThatOfTheSource [
+	"A quote that is removed does not join the halves of a sequence: they are invalid where they stand"
+
+	| bytes index answer rows |
+	bytes := #[ 34 16rC3 34 34 16rA9 34 ].
+	index := WordArray new: 1.
+	rows := Array new: 1.
+	self backendObject index: bytes base: 1 from: 1 to: 6 dialect: (self wordFlags: (self flags: #( final ))) into: index from: 1.
+	answer := self backendObject
+		          rows: bytes
+		          base: 1
+		          to: 6
+		          dialect: (self wordFlags: (self flags: #( final )))
+		          index: index
+		          from: 1
+		          to: 1
+		          types: nil
+		          fieldCount: 0
+		          into: rows
+		          from: 1
+		          wideStringClass: WideString
+		          empty: nil
+		          budget: -1.
+	self assert: answer equals: { SimdCSVBackend statusError. 0. 1. 0. SimdCSVBackend codeInvalidUTF8. 2. 1. 1. 0 }
+]

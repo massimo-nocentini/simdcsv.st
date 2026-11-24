@@ -6,10 +6,10 @@ Positions are 1-based and inclusive in the arguments and in the answers; the val
 An answer is an Array whose first element is a status:
 
 - 0, OK;
-- 1, MORE: no slot of the destination left, the budget of objects used, or no memory after at least one row;
+- 1, MORE: no slot of the destination left; with a budget of objects, the budget is used, new space is full or the next record may take more than it; or no memory after at least one row;
 - 2, ERROR: a code and a position say which;
 - 3, TOO_LARGE: more than 4,294,967,294 units from the base on;
-- 4, NO_ROOM: the first record did not fit the object memory; `need` is its size in bytes.
+- 4, NO_ROOM: the first record did not fit the object memory, or the budget is -2, which only measures it; `need` is its size in bytes.
 
 The codes of an ERROR:
 

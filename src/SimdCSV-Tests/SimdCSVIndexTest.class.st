@@ -409,3 +409,33 @@ SimdCSVIndexTest >> randomString: size with: aRandom alphabet: aString [
 	1 to: size do: [ :i | string at: i put: (aString at: (aRandom nextInteger: aString size)) ].
 	^ string
 ]
+
+{ #category : 'tests' }
+SimdCSVIndexTest >> testFinalCarriageReturnWithoutASlot [
+	"A field that ends without a slot is MORE, even where its end is a CR in the last position, with which no record is complete"
+
+	| bytes answer |
+	bytes := self bytes: 'a' , String cr.
+	answer := self backendObject index: bytes base: 1 from: 1 to: 2 dialect: (self wordFlags: 0) into: (WordArray new: 0) from: 1.
+	self assert: answer equals: { SimdCSVBackend statusMore. 0. 0. 1. 0. 0. 0. 0. 0 }.
+	answer := self backendObject index: bytes base: 1 from: 1 to: 2 dialect: (self wordFlags: 0) into: (WordArray new: 1) from: 1.
+	self assert: answer equals: { SimdCSVBackend statusOK. 0. 0. 1. 0. 0. 0. 0. 0 }
+]
+
+{ #category : 'tests' }
+SimdCSVIndexTest >> testNextAfterBlankLines [
+	"With SKIP_BLANK next is after the blank lines, whatever the status"
+
+	| flags bytes index |
+	flags := self flags: #( skipBlank final strict ).
+	index := [ :text :size |
+	         bytes := self bytes: text.
+	         self backendObject index: bytes base: 1 from: 1 to: bytes size dialect: (self wordFlags: flags) into: (WordArray new: size) from: 1 ].
+	"MORE"
+	self assert: (index value: 'a' , String lf , String lf , String lf , 'b' value: 1) equals: { SimdCSVBackend statusMore. 1. 1. 5. 0. 1. 1. 0. 0 }.
+	"ERROR"
+	self assert: (index value: 'a' , String lf , String lf , String lf , 'b"' value: 9) equals: { SimdCSVBackend statusError. 1. 1. 5. 0. 1. 1. 1. 6 }.
+	"OK, the open record"
+	flags := self flags: #( skipBlank ).
+	self assert: (index value: 'a' , String lf , String lf , String lf , 'b' value: 9) equals: { SimdCSVBackend statusOK. 1. 1. 5. 0. 1. 1. 0. 0 }
+]
