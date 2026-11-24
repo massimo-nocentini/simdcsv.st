@@ -382,7 +382,10 @@ SimdCSVTable >> float64ArrayAt: aColumn ifInvalid: aBlock [
 	self cellsOf: columns empty: nil do: [ :column :number :row :cell |
 		answer at: row put: (cell == SimdCSVReader emptyMark
 				 ifTrue: [ Float nan ]
-				 ifFalse: [ cell ifNil: [ Float nan ] ]) ].
+				 ifFalse: [
+					 cell
+						 ifNil: [ Float nan ]
+						 ifNotNil: [ cell asFloat ] ]) ].
 	^ answer
 ]
 
