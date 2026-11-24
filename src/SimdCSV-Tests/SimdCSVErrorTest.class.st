@@ -34,6 +34,8 @@ SimdCSVErrorTest >> testInvalidEncoding [
 	error := self assert: [ self read: #[ 97 10 34 10 34 44 98 195 40 ] ] signals: SimdCSVInvalidEncoding text: 'Invalid UTF-8 at byte 8 (record 2, line 2, field 2): try encoding: #latin1, or decode the file first'.
 	self assert: error code equals: 4.
 	self assert: [ self read: #[ 255 254 0 ] ] signals: SimdCSVInvalidEncoding text: 'Not UTF-8 but a UTF-16 or UTF-32 byte order mark at byte 1: decode the file first'.
+	error := self assert: [ (self reader: #[ 97 44 98 10 99 44 255 ]) skipHeader; upToEnd ] signals: SimdCSVInvalidEncoding.
+	self assert: error columnName equals: 'b'.
 	self assert: [ (self reader: #[ 255 44 97 ]) readHeader ] signals: SimdCSVInvalidEncoding text: 'Invalid UTF-8 at byte 1 (record 1, line 1, field 1): try encoding: #latin1, or decode the file first'
 ]
 
@@ -71,6 +73,15 @@ SimdCSVErrorTest >> testRecordTooLong [
 		self assert: [ (self reader: (SimdCSVTestStream on: text sizes: #( 3 ))) batchBytes: batch; maxRecordBytes: 14; upToEnd ] signals: SimdCSVResourceError text: 'Record 2 starting at line 2 (character 5) exceeds maxRecordBytes (14): possible unclosed quote opened at character 13'.
 		self assert: [ (self reader: 'abcdefghij' asByteArray) batchBytes: batch; maxRecordBytes: 5; upToEnd ] signals: SimdCSVResourceError text: 'Record 1 starting at line 1 (byte 1) exceeds maxRecordBytes (5)'.
 		self assert: [ (self reader: 'abcdefghij"k' asByteArray) batchBytes: batch; maxRecordBytes: 5; quote: nil; upToEnd ] signals: SimdCSVResourceError text: 'Record 1 starting at line 1 (byte 1) exceeds maxRecordBytes (5)' ]
+]
+
+{ #category : 'tests' }
+SimdCSVErrorTest >> testLinesOfLFOnly [
+	"CR ends no line then"
+
+	| text |
+	text := 'a,1' , String cr , ',' , String lf , 'b' , String crlf , 'c' , String cr , 'd,2x' , String lf.
+	self assert: [ (self reader: text) dialect: (SimdCSVDialect comma lineEnd: #lf; skipEmptyLines: true; yourself); addField; addIntegerField; ifInvalid: [ :each | 0 ]; next; ifInvalid: nil; upToEnd ] signals: SimdCSVConversionError text: 'Not an integer: ''2x'' in field 2, record 3, line 3, character 14'
 ]
 
 { #category : 'tests' }

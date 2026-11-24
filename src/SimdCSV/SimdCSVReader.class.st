@@ -124,6 +124,9 @@ Class {
 		'alwaysWork',
 		'hasNumbers',
 		'passNil',
+		'plain',
+		'nullTexts',
+		'emptyMark',
 		'builderEmpty',
 		'firstWidth',
 		'firstWidthRecord'
@@ -740,13 +743,33 @@ SimdCSVReader >> reject: filter thenDo: aBlock [
 SimdCSVReader >> upToEnd [
 	"An Array of the records that are left"
 
-	^ Array streamContents: [ :out |
-		  [ self hasRecord ] whileTrue: [
-			  (needsWork or: [ rowNext > rowCount ])
-				  ifTrue: [ out nextPut: self next ]
-				  ifFalse: [
-					  out next: rowCount - rowNext + 1 putAll: rows startingAt: rowNext.
-					  rowNext := rowCount + 1 ] ] ]
+	| batches size answer start |
+	batches := OrderedCollection new.
+	size := 0.
+	[ self hasRecord ] whileTrue: [
+		| batch |
+		batch := self nextBatch.
+		size := size + batch size.
+		batches add: batch ].
+	answer := Array new: size.
+	start := 1.
+	batches do: [ :batch |
+		answer replaceFrom: start to: start + batch size - 1 with: batch startingAt: 1.
+		start := start + batch size ].
+	^ answer
+]
+
+{ #category : 'private - records' }
+SimdCSVReader >> nextBatch [
+	"An Array of the records of the rows that are built, at least one; or signal the error in the place of the next one"
+
+	| batch |
+	rowNext > rowCount ifTrue: [ ^ { self next } ].
+	batch := rows copyFrom: rowNext to: rowCount.
+	needsWork
+		ifTrue: [ 1 to: batch size do: [ :i | batch at: i put: self next ] ]
+		ifFalse: [ rowNext := rowCount + 1 ].
+	^ batch
 ]
 
 { #category : 'enumerating' }
@@ -1349,13 +1372,15 @@ SimdCSVReader >> plan [
 	planned ifTrue: [ ^ self ].
 	self planColumns.
 	self planWidth.
+	emptyMark := self class emptyMark.
+	nullTexts := dialect nullTexts.
 	passNil := rowColumns notNil and: [ dialect emptyFieldValue == #passNil ].
 	empty := self emptyValue.
 	converters := rowColumns notNil and: [ rowColumns anySatisfy: [ :each | (each isPlain or: [ each isNumber ]) not ] ].
 	hasNumbers := rowColumns notNil and: [ rowColumns anySatisfy: [ :each | each isNumber ] ].
 	builderEmpty := (empty isNil or: [ objectMode not and: [ converters not ] ])
 		                ifTrue: [ empty ]
-		                ifFalse: [ self class emptyMark ].
+		                ifFalse: [ emptyMark ].
 	alwaysWork := objectMode or: [ converters or: [ order notNil or: [ recordClass ~~ Array ] ] ].
 	planned := true
 ]
@@ -1414,6 +1439,7 @@ SimdCSVReader >> planRowColumns: used fieldCount: count [
 	rowColumns := used sorted: [ :a :b | a position <= b position ].
 	rowColumns = used ifFalse: [
 		order := rowColumns collect: [ :each | used identityIndexOf: each ] ].
+	plain := rowColumns collect: [ :each | each isPlain ].
 	types := ByteArray new: count.
 	rowColumns do: [ :each | types at: each position put: each code ].
 	width := count
@@ -1441,12 +1467,11 @@ SimdCSVReader >> recordFrom: row [
 	rowColumns ifNil: [ ^ recordClass withAll: row ].
 	values := Array new: row size.
 	1 to: row size do: [ :i |
-		| column value |
-		column := rowColumns at: i.
-		value := self valueOf: (row at: i) in: column.
-		value == self class emptyMark ifTrue: [
+		| value |
+		value := self valueOf: (row at: i) at: i.
+		value == emptyMark ifTrue: [
 			value := passNil
-				         ifTrue: [ column valueOfEmpty ]
+				         ifTrue: [ (rowColumns at: i) valueOfEmpty ]
 				         ifFalse: [ dialect emptyFieldValue ] ].
 		values
 			at: (order
@@ -1465,23 +1490,30 @@ SimdCSVReader >> objectFrom: row [
 	| record |
 	record := recordClass new.
 	1 to: row size do: [ :i |
-		| column value |
-		column := rowColumns at: i.
-		value := self valueOf: (row at: i) in: column.
-		value == self class emptyMark
-			ifFalse: [ column store: value into: record ]
-			ifTrue: [ passNil ifTrue: [ column store: column valueOfEmpty into: record ] ] ].
+		| value |
+		value := self valueOf: (row at: i) at: i.
+		value == emptyMark
+			ifFalse: [ (rowColumns at: i) store: value into: record ]
+			ifTrue: [
+				passNil ifTrue: [
+					| column |
+					column := rowColumns at: i.
+					column store: column valueOfEmpty into: record ] ] ].
 	^ record
 ]
 
 { #category : 'private - records' }
-SimdCSVReader >> valueOf: cell in: aColumn [
-	"The value of a cell of the builder, or the mark of an empty one"
+SimdCSVReader >> valueOf: cell at: i [
+	"The value of a cell of the builder, the one numbered i of its row, or the mark of an empty one"
 
-	cell == builderEmpty ifTrue: [ ^ self class emptyMark ].
-	(aColumn isPlain or: [ cell isString not ]) ifTrue: [ ^ cell ].
-	(cell isEmpty or: [ dialect nullTexts includes: cell ]) ifTrue: [ ^ self class emptyMark ].
-	^ aColumn valueOf: cell ifInvalid: [ self valueOfInvalid: cell in: aColumn ]
+	| column |
+	cell == builderEmpty ifTrue: [ ^ emptyMark ].
+	((plain at: i) or: [ cell isString not ]) ifTrue: [ ^ cell ].
+	(cell isEmpty or: [ nullTexts notEmpty and: [ nullTexts includes: cell ] ]) ifTrue: [ ^ emptyMark ].
+	column := rowColumns at: i.
+	^ column hasConverter
+		  ifTrue: [ column converted: cell ]
+		  ifFalse: [ column valueOf: cell ifInvalid: [ self valueOfInvalid: cell in: column ] ]
 ]
 
 { #category : 'private - records' }

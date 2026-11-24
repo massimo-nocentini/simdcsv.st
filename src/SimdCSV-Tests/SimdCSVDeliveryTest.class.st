@@ -167,6 +167,61 @@ SimdCSVDeliveryTest >> testResourceErrorIsPassedToTheEnd [
 ]
 
 { #category : 'tests' }
+SimdCSVDeliveryTest >> testChangedSource [
+	"A source that is changed between two batches is no more than an error, which is not passed but to the next record of the index"
+
+	| bytes reader |
+	bytes := (self lines: ((1 to: 5000) collect: [ :i | i printString ])) asByteArray.
+	reader := self reader: bytes.
+	reader skip: 4000.
+	bytes replaceFrom: 1 to: bytes size with: (ByteArray new: bytes size withAll: 97) startingAt: 1.
+	reader skip: 96.
+	2 timesRepeat: [ self assert: [ reader next ] signals: SimdCSVArgumentError text: 'The source was changed while it was read' ].
+	self deny: reader atEnd.
+	bytes := (self lines: #( 'a' 'b' )) asByteArray.
+	self assert: [
+		(SimdCSVTable on: bytes) in: [ :table |
+			bytes replaceFrom: 1 to: 4 with: #[ 97 97 97 97 ] startingAt: 1.
+			table rowAt: 1 ] ] signals: SimdCSVArgumentError
+]
+
+{ #category : 'tests' }
+SimdCSVDeliveryTest >> testQuoteErrorInLongRecord [
+	"A record whose end is beyond the limit is passed to the end of the input"
+
+	| text reader |
+	text := '1' , String lf , '2"' , (String new: 100 withAll: $x) , String lf , '3'.
+	{ text. SimdCSVTestStream on: text asByteArray sizes: #( 9 ) } do: [ :source |
+		reader := self reader: source.
+		reader
+			batchBytes: 10;
+			maxRecordBytes: 20;
+			beStrictQuoting.
+		self assert: reader next equals: #( '1' ).
+		self assert: [ reader next ] signals: SimdCSVQuoteError.
+		reader skipFailedRecord.
+		self assert: reader atEnd ]
+]
+
+{ #category : 'tests' }
+SimdCSVDeliveryTest >> testHeaderAfterError [
+	"The errors that stand before a record are those of the header too"
+
+	| reader |
+	reader := self reader: (self lines: #( 'a"' 'b' )).
+	reader beStrictQuoting.
+	2 timesRepeat: [ self assert: [ reader readHeader ] signals: SimdCSVQuoteError ].
+	self assert: [ reader next ] signals: SimdCSVQuoteError.
+	reader skipFailedRecord.
+	self assert: reader readHeader equals: #( 'b' ).
+	reader := self reader: #[ 255 10 97 10 98 ].
+	2 timesRepeat: [ self assert: [ reader readHeader ] signals: SimdCSVInvalidEncoding ].
+	reader skipFailedRecord.
+	self assert: reader readHeader equals: #( 'a' ).
+	self assert: reader upToEnd equals: #( #( 'b' ) )
+]
+
+{ #category : 'tests' }
 SimdCSVDeliveryTest >> testLimitRaisedAfterError [
 	self sourcesOf: (self lines: #( '1' '345678901234567890' '4' )) do: [ :source :name |
 		| reader |

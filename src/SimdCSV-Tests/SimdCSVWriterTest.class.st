@@ -24,7 +24,8 @@ SimdCSVWriterTest >> write: rows with: aBlock [
 SimdCSVWriterTest >> testQuoted [
 	self assert: (SimdCSV stringFrom: #( #( 'a' 'b,c' ) #( 'd"e' '' ) )) equals: (self lines: #( '"a","b,c"' '"d""e",""' )).
 	self assert: (SimdCSV stringFrom: { { 1. nil. #x. $y } }) equals: (self lines: #( '"1",,"x","y"' )).
-	self assert: (SimdCSV stringFrom: #(  )) equals: ''
+	self assert: (SimdCSV stringFrom: #(  )) equals: ''.
+	self assert: (String streamContents: [ :stream | SimdCSV write: #( #( 1 ) ) to: stream ]) equals: (self lines: #( '"1"' ))
 ]
 
 { #category : 'tests' }

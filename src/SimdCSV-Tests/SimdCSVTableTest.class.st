@@ -264,8 +264,12 @@ SimdCSVTableTest >> testRandomTables [
 			         ifNotEmpty: [ rows first size ].
 		self assert: table columnCount equals: width.
 		self assert: table isRagged equals: (rows anySatisfy: [ :row | row size ~= width ]).
+		self assert: (SimdCSVSlicedTestTable on: text dialect: dialect) isRagged equals: table isRagged.
 		rows := rows collect: [ :row | (1 to: width) collect: [ :i | row at: i ifAbsent: [ nil ] ] ].
 		rows := rows collect: [ :row | row asArray ].
 		self assert: table asArray equals: rows.
+		table := SimdCSVSlicedTestTable on: text dialect: dialect.
+		self assert: table asArray equals: rows.
+		self assert: table columnCount equals: width.
 		1 to: width do: [ :i | self assert: (table column: i) equals: (rows collect: [ :row | row at: i ]) ] ]
 ]

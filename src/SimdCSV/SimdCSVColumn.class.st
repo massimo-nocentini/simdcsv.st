@@ -148,6 +148,11 @@ SimdCSVColumn >> isPlain [
 ]
 
 { #category : 'testing' }
+SimdCSVColumn >> hasConverter [
+	^ converter notNil
+]
+
+{ #category : 'testing' }
 SimdCSVColumn >> hasDestination [
 	"Do my values go somewhere else than to a place in an indexable record?"
 
@@ -177,9 +182,9 @@ SimdCSVColumn >> valueOf: aString ifInvalid: aBlock [
 	^ aString
 ]
 
-{ #category : 'private' }
+{ #category : 'converting' }
 SimdCSVColumn >> converted: aString [
-	"A cached value may be nil"
+	"The value of my converter for a text; a cached one may be nil"
 
 	| value |
 	cache ifNil: [ ^ converter value: aString ].
