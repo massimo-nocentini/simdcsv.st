@@ -51,11 +51,10 @@ SimdCSVMemoryTest >> testManyCommas [
 
 { #category : 'helpers' }
 SimdCSVMemoryTest >> liveBytes [
-	"The bytes of the objects that are left after a full garbage collection"
+	"The bytes of the objects that are left after a full garbage collection, which answers the largest free piece and not all that is free"
 
-	| free |
-	free := Smalltalk garbageCollect.
-	^ (Smalltalk vm parameterAt: 1) - free
+	Smalltalk garbageCollect.
+	^ (Smalltalk vm parameterAt: 1) - (Smalltalk vm parameterAt: 54)
 ]
 
 { #category : 'tests' }

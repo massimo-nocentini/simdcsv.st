@@ -25,6 +25,15 @@ SimdCSVBackendTest >> failure: aSymbol [
 ]
 
 { #category : 'helpers' }
+SimdCSVBackendTest >> makeRoomFor: byteCount [
+	"The free bytes of SimdCSVTestBoundedBackend are those it is told, but the plugin makes the row in the old space of the VM: without a free piece for it there the call is made again, as it must be, and that is written down too"
+
+	byteCount < 100000 ifTrue: [ ^ self ].
+	ByteArray new: 4 * byteCount + 1048576.
+	Smalltalk garbageCollect
+]
+
+{ #category : 'helpers' }
 SimdCSVBackendTest >> rowsOf: aBackend [
 	SimdCSVBackend testHook: #backend value: aBackend.
 	^ SimdCSVBackend
@@ -286,6 +295,7 @@ SimdCSVBackendTest >> boundedRows: aString free: aCollection canGrow: aBoolean [
 	rows := Array new: 1.
 	word := SimdCSVDialect comma wordFor: bytes final: true lines: false exact: false.
 	answer := SimdCSVBackend index: bytes base: 1 from: 1 to: bytes size dialect: word into: index from: 1.
+	self makeRoomFor: bytes size.
 	SimdCSVTestBoundedBackend free: aCollection canGrow: aBoolean.
 	answer := [
 	          SimdCSVTestBoundedBackend
